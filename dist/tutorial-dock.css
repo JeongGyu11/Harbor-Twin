@@ -1,0 +1,19 @@
+/* Reserve separate screen space for the guide: it never overlays the app. */
+body.tutorial-docked{--tutorial-dock-width:440px;--tutorial-stage-height:100dvh;overflow:hidden}
+.tutorial-docked .app{position:fixed;inset:0 calc(var(--tutorial-dock-width) + 24px) 0 0;width:auto;height:auto;overflow:auto;overscroll-behavior:contain;container-type:inline-size;container-name:tutorial-stage;scrollbar-gutter:stable;background:var(--bg)}
+.tutorial-overlay{overflow:hidden;pointer-events:auto}
+.tutorial-card{left:auto!important;top:12px!important;right:12px;bottom:12px;width:440px;max-width:none;height:auto;max-height:none;border-radius:10px;box-shadow:0 8px 30px #0005;pointer-events:auto;scrollbar-gutter:stable}
+.tutorial-spotlight{box-shadow:none;border:2px solid #79f4d4;background:transparent;border-radius:8px;transition:none;z-index:0}
+.tutorial-top{top:-23px;margin-top:-8px;justify-content:space-between;background:#142d38}.tutorial-dock-title{min-width:0}.tutorial-dock-title span{display:block;font-size:8px;letter-spacing:1.4px;color:#7bacae}.tutorial-dock-title small{display:block;font-size:10px;color:#a5d6cd;margin-top:6px;line-height:1.5}
+.tutorial-docked .app header{padding:0 20px}.tutorial-docked .app main{padding:20px 20px 0}.tutorial-docked .app .workspace{grid-template-columns:minmax(0,1fr)}.tutorial-docked .app .side-panel{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.tutorial-docked .app .view-body{height:clamp(180px,calc(var(--tutorial-stage-height) - 110px),430px)}
+.tutorial-docked .app .page-title{flex-wrap:wrap;gap:12px}.tutorial-docked .app .page-title>div{min-width:0}.tutorial-docked .app h1{font-size:22px;line-height:1.5}.tutorial-docked .app .metric-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.tutorial-docked .app .metric{min-width:0}.tutorial-docked .app .metric i{display:none}.tutorial-docked .app .viewer-footer #selectionInfo{display:none}.tutorial-docked .app .vessel-facts{display:none}.tutorial-docked .app .tutorial-target{scroll-margin:14px}
+.tutorial-docked .app .panel.tutorial-target{max-height:calc(var(--tutorial-stage-height) - 28px);overflow:auto;scrollbar-width:thin}
+@container tutorial-stage (max-width:640px){
+ .tutorial-docked .app main{padding:15px 12px 0}.tutorial-docked .app .side-panel{grid-template-columns:1fr}.tutorial-docked .app h1{font-size:20px}.tutorial-docked .app .page-title>div{width:100%}.tutorial-docked .app .tutorial-launch{margin:0}.tutorial-docked .app .metric{padding:11px 9px}.tutorial-docked .app .metric b{font-size:23px}.tutorial-docked .app .metric>span{font-size:9px}.tutorial-docked .app .metric-grid{gap:7px}.tutorial-docked .app .deck-selector{width:105px}.tutorial-docked .app .deck-selector button{font-size:9px}.tutorial-docked .app .view-overlay small{font-size:7px}.tutorial-docked .app .view-tag{font-size:7px}.tutorial-docked .app .panel-header{padding:0 12px}.tutorial-docked .app .legend{font-size:8px}.tutorial-docked .app .chart-legend span{font-size:8px}.tutorial-docked .app .subtle{display:none}.tutorial-docked .app .vessel-bar{gap:9px;padding:10px}.tutorial-docked .app .vessel-bar strong{font-size:11px}.tutorial-docked .app .chart-legend{gap:9px!important}
+}
+@media(max-width:999px){
+ body.tutorial-docked{--tutorial-stage-height:52dvh}
+ .tutorial-docked .app{inset:0 0 48dvh 0;border-bottom:1px solid #365964}
+ .tutorial-card{left:12px!important;right:12px;top:auto!important;bottom:12px;width:auto;height:calc(48dvh - 24px);border-radius:9px;max-width:none;padding:18px}
+ .tutorial-top{top:-18px}.tutorial-card .tutorial-art{display:none}.tutorial-card .tutorial-top{margin-bottom:10px}.tutorial-card h2{font-size:18px}.tutorial-card p{font-size:11px}.tutorial-card .tutorial-instructions{font-size:11px}.tutorial-card .tutorial-dots{margin:12px 0}.tutorial-card #tutorial-jump{margin-bottom:12px}
+}
