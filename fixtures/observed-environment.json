@@ -1,0 +1,101 @@
+{
+  "weather": {
+    "source": "기상청 ASOS 실제 관측",
+    "sourceType": "sensor_observation",
+    "provider": "KMA ASOS",
+    "validAt": "2026-10-27T16:00:00+09:00",
+    "observedAt": "2026-10-27T16:00:00+09:00",
+    "fetchedAt": "2026-10-27T17:01:32.795406+09:00",
+    "station": {
+      "id": "159",
+      "name": "부산",
+      "lat": 35.10468,
+      "lon": 129.03203,
+      "distanceKm": 10.05
+    },
+    "weather": "clear",
+    "classificationBasis": "실제 운량 + IR=3(무강수)·IX=2/5(유의 현상 없음) 보고 코드 기반 분류",
+    "raw": {
+      "WC": "-9",
+      "WW": "-",
+      "CA_TOT": "0",
+      "RN": "-9.0",
+      "TA": "18.7",
+      "VS": "4581",
+      "IR": "3",
+      "IX": "2"
+    },
+    "temperature": "18.7",
+    "isDay": 1,
+    "ageMinutes": 65.1,
+    "fetchAgeMinutes": 3.6,
+    "usable": true,
+    "servedAt": "2026-10-27T08:05:06.033763+00:00",
+    "storage": "server-sqlite",
+    "collection": {
+      "attemptedAt": "2026-10-27T08:01:32.795406+00:00",
+      "succeededAt": "2026-10-27T08:01:32.795406+00:00",
+      "error": null
+    }
+  },
+  "marine": {
+    "source": "기상청 해양기상부이 관측",
+    "station": {
+      "id": "22513",
+      "name": "이수도",
+      "lat": 34.97166667,
+      "lon": 128.75833333,
+      "distanceKm": 34.07
+    },
+    "observedAt": "2026-10-27T17:00:00+09:00",
+    "ageMinutes": 5.1,
+    "fetchedAt": "2026-10-27T17:01:32.733693+09:00",
+    "usable": true,
+    "warning": "관측이 120분 이상 지연됐거나 관측소가 150 km 밖이면 적용하지 않습니다. 항만 내부 관측이 아닌 주변 해역 자료입니다.",
+    "data": {
+      "wind": 5.8,
+      "windDirection": 318.0,
+      "height": 0.4,
+      "period": 7.4,
+      "direction": 134.0
+    },
+    "mapping": {
+      "busan": {
+        "id": "22513"
+      },
+      "busanNew": {
+        "id": "22513"
+      },
+      "incheon": {
+        "id": "22303"
+      },
+      "ulsan": {
+        "id": "22189"
+      },
+      "gwangyang": {
+        "id": "22188"
+      },
+      "pyeongtaek": {
+        "id": "22303"
+      },
+      "pohang": {
+        "id": "22106"
+      }
+    },
+    "servedAt": "2026-10-27T08:05:06.041165+00:00",
+    "storage": "server-sqlite",
+    "collection": {
+      "attemptedAt": "2026-10-27T08:01:32.733693+00:00",
+      "succeededAt": "2026-10-27T08:01:32.733693+00:00",
+      "error": null
+    }
+  },
+  "complete": true,
+  "sourceType": "sensor_observation",
+  "servedAt": "2026-10-27T08:05:06.044511+00:00",
+  "weatherCollection": {
+    "attemptedAt": "2026-10-27T08:01:32.795406+00:00",
+    "succeededAt": "2026-10-27T08:01:32.795406+00:00",
+    "error": null
+  }
+}

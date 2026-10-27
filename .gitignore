@@ -6,3 +6,10 @@ node_modules/
 *.log
 Thumbs.db
 .DS_Store
+
+.env.local
+__pycache__/
+
+data/
+*.sqlite3*
+!.env.local.example

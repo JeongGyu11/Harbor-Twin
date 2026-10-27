@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {validateEnvironment,makeURLs,fetchEnvironment} from './dist/environment.mjs';
+import {waveAt} from './dist/decision.mjs';
+import {surfaceHeight,hullPose} from './dist/ocean-motion.mjs';
+const e={lat:35.05,lon:129.12,wind:5,windDirection:90,height:1,period:8,direction:90,heading:0,weather:'clear',localTime:'2026-10-27T03:00'};
+assert.equal(makeURLs(e).hour,'2026-10-26T18');
+assert.throws(()=>validateEnvironment({...e,wind:-1}));assert.throws(()=>validateEnvironment({...e,localTime:'bad'}));
+const mock=async url=>({ok:true,json:async()=>url.includes('marine-api')?{latitude:35,longitude:129,hourly:{time:['2026-10-26T18:00'],wave_height:[1.2],wave_period:[7],wave_direction:[110]}}:{latitude:35,longitude:129,hourly:{time:['2026-10-26T18:00'],weather_code:[61],wind_speed_10m:[6],wind_direction_10m:[100],is_day:[0]}}});
+const result=await fetchEnvironment(e,mock);assert.equal(result.weather,'rain');assert.equal(result.height,1.2);assert.equal(result.isDay,0);assert.deepEqual(result.apiCoordinates.marine,[35,129]);
+await assert.rejects(()=>fetchEnvironment(e,async()=>({ok:true,json:async()=>({hourly:{time:[]}})})));
+assert.notEqual(waveAt(2,'off',e),waveAt(2,'off',{...e,height:0,wind:0}));
+assert.notEqual(surfaceHeight(10,20,3,e),surfaceHeight(10,20,3,{...e,direction:0}));assert.ok(Object.values(hullPose(10,e)).every(Number.isFinite));
+console.log('PASS environment validation, KST/UTC day boundary, forecast mapping, missing data, wind/wave/heading model and hull pose');

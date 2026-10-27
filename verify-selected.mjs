@@ -1,0 +1,13 @@
+import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
+const nodes={};for(const id of ['env-location','env-time','selected-fetch-apply','selected-marine-apply','selected-status','selected-weather','selected-marine'])nodes['#'+id]={value:id==='env-location'?'busan':'',disabled:false,textContent:'',addEventListener(){}};
+let input={localTime:'2023-01-24T12:00',port:'부산',weather:'cloud',wind:1,height:1,period:8,direction:0,windDirection:0,heading:0};
+const m={observedAt:'2023-01-24T11:30:00+09:00',offsetMinutes:-30,station:{name:'부이',id:'1',distanceKm:20},data:{wind:5,windDirection:90,height:.4,period:8,direction:90}};
+const w={...m,observedAt:'2023-01-24T12:00:00+09:00',offsetMinutes:0,data:{weather:'rain',classificationBasis:'현재일기'}};
+let result={marine:m,weather:w,complete:true,errors:{}},applied=[];
+const source=fs.readFileSync('dist/selected-observations.js','utf8').replace('export function','function');
+const ctx=vm.createContext({document:{querySelector:s=>nodes[s]},location:{hostname:'127.0.0.1',port:'4174'},Date,AbortSignal,URLSearchParams,fetch:async()=>({ok:true,json:async()=>result}),read:()=>({...input}),apply:e=>applied.push(e),onApplied(){}});
+vm.runInContext(source+';initSelectedObservations({read,apply,onApplied});',ctx);
+await nodes['#selected-fetch-apply'].onclick();assert.equal(applied.length,1);assert.equal(applied[0].weather,'rain');assert.equal(applied[0].wind,5);assert.equal(applied[0].selectedObservations.marine.offsetMinutes,-30);assert.match(nodes['#selected-marine'].textContent,/30分|30분/);
+result={marine:m,weather:null,complete:false,errors:{weather:'403'}};await nodes['#selected-fetch-apply'].onclick();assert.equal(applied.length,1);assert.equal(nodes['#selected-marine-apply'].disabled,false);nodes['#selected-marine-apply'].onclick();assert.equal(applied.length,2);assert.equal(applied[1].weather,'cloud');assert.equal(applied[1].weatherData,null);
+input={...input,localTime:'2999-01-01T12:00'};await nodes['#selected-fetch-apply'].onclick();assert.equal(applied.length,2);assert.match(nodes['#selected-status'].textContent,/미래/);
+console.log('PASS actual combined apply, time offset display, partial data no auto apply, explicit marine-only, future rejection');

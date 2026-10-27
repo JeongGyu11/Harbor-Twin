@@ -1,0 +1,5 @@
+*
+!observation_server.py
+!dist/
+!dist/**
+!Dockerfile

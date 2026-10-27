@@ -1,0 +1,12 @@
+services:
+  harbor-twin:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      KMA_API_KEY: ${KMA_API_KEY:?Set KMA_API_KEY on server}
+    volumes:
+      - observations:/data
+    restart: unless-stopped
+volumes:
+  observations:

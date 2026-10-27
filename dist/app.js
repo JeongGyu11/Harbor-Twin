@@ -1,9 +1,18 @@
+import {initWorkspaceUI} from './workspace-ui.js?v=1';
+import {createWeatherEffects} from './weather-effects.js?v=1';
 import * as THREE from './vendor/three.module.js';
+import * as Decision from './decision.mjs?v=env2';
+import { createOcean } from './ocean.js?v=horizon2';
+import { hullPose } from './ocean-motion.mjs?v=env2';
+import { initEnvironment } from './environment-ui.js?v=workspace1';
+initWorkspaceUI();
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
-const state={running:false,time:0,speed:2,scenario:'port',view:'3d',deck:'all',exploded:false,removed:[],queue:[],tanks:[600,600,600,600],history:[],events:[],transfer:null,applied:0,selected:null,transferred:0,notice:null};
+const state={running:false,time:0,speed:2,scenario:'balanced',view:'3d',deck:'all',exploded:false,removed:[],queue:[],tanks:[600,600,600,600],history:[],events:[],transfer:null,applied:0,selected:null,transferred:0,notice:null};
 const cargo=[];for(let tier=0;tier<3;tier++)for(let bay=0;bay<6;bay++)for(let row=0;row<4;row++)cargo.push({id:`C${String(cargo.length+1).padStart(3,'0')}`,tier,bay,row,x:-32+bay*13,z:-7.5+row*5,weight:22+((bay*7+row*3+tier*5)%13)});
 const tanks=[{id:'P-F',name:'左현 선수 탱크'.replace('左','좌'),x:28,z:-9},{id:'S-F',name:'우현 선수 탱크',x:28,z:9},{id:'P-A',name:'좌현 선미 탱크',x:-30,z:-9},{id:'S-A',name:'우현 선미 탱크',x:-30,z:9}];
-let recommendation=null,simAccumulator=0;const MAX_STEPS=72,STEP_SECONDS=20;
+let recommendation=null,simAccumulator=0;const MAX_STEPS=72;let STEP_SECONDS=20;
+let config={...Decision.DEFAULTS,levels:[...Decision.DEFAULTS.levels],wave:'moderate'},strategy='predictive',customOrder=null,lastDecision=null,lastDecisionAt=-Infinity,comparisonWorker=null,comparisonResult=null;
+const originalCargo=cargo.map(c=>({...c}));
 function fmtTime(t){return `${String(Math.floor(t/60)).padStart(2,'0')}:${String(Math.floor(t%60)).padStart(2,'0')}`}
 // Illustrative hydrostatics: fixed KM calibrated to initial GM; not ship-certified data.
 const MODEL={baseMass:12000,baseKG:6.5,waterDensity:1.025,tankLength:28,tankBreadth:6,tankCapacity:1200,minTank:80,maxTank:1120,minGM:.2,initialGM:2.4};
@@ -12,21 +21,21 @@ const cargoHeight=c=>13.1+c.tier*4.8;
 const referenceMass=MODEL.baseMass+2400+cargo.reduce((sum,c)=>sum+c.weight,0);
 const referenceKG=(MODEL.baseMass*MODEL.baseKG+2400*tankHeight/4+cargo.reduce((sum,c)=>sum+c.weight*cargoHeight(c),0))/referenceMass;
 const surfaceMoment=MODEL.waterDensity*MODEL.tankLength*MODEL.tankBreadth**3/12;
-const referenceKM=referenceKG+4*surfaceMoment/referenceMass+MODEL.initialGM;
+let referenceKM=referenceKG+4*surfaceMoment/referenceMass+MODEL.initialGM;
 function metrics(withTransfer=true,levels=state.tanks){
  let mass=MODEL.baseMass,mz=0,mx=0,vertical=MODEL.baseMass*MODEL.baseKG,freeMoment=0;
  for(const c of cargo)if(!state.removed.includes(c.id)){mass+=c.weight;mz+=c.weight*c.z;mx+=c.weight*c.x;vertical+=c.weight*cargoHeight(c);}
- tanks.forEach((t,i)=>{const w=withTransfer?levels[i]:600;mass+=w;mz+=w*t.z;mx+=w*t.x;vertical+=w*tankHeight*(w/MODEL.tankCapacity)/2;if(w>0&&w<MODEL.tankCapacity)freeMoment+=surfaceMoment;});
+ tanks.forEach((t,i)=>{const w=withTransfer?levels[i]:config.levels[i];mass+=w;mz+=w*t.z;mx+=w*t.x;vertical+=w*tankHeight*(w/MODEL.tankCapacity)/2;if(w>0&&w<MODEL.tankCapacity)freeMoment+=surfaceMoment;});
  const kg=vertical/mass,freeSurface=freeMoment/mass,gm=referenceKM-kg-freeSurface,valid=Number.isFinite(gm)&&gm>MODEL.minGM;
  return {heel:valid?Math.atan(mz/(mass*gm))*180/Math.PI:null,trim:mx/(mass*10),mass,mz,mx,kg,gm,freeSurface,valid};
 }
 function complete(){return state.removed.length===MAX_STEPS&&!state.transfer&&!recommendation;}
-function recordHistory(){const m=metrics(),base=metrics(false);const point={time:state.time,heel:m.heel,baseline:base.heel};const last=state.history.at(-1);if(last&&Math.abs(last.time-point.time)<1e-7)state.history[state.history.length-1]=point;else state.history.push(point);}
+function recordHistory(){const m=metrics(),base=metrics(false);const point={time:state.time,heel:m.heel,baseline:base.heel,wave:Decision.waveAt(state.time,config.wave,config.environment),instant:Decision.observedHeel(m.heel,state.time,config.wave,config.environment)};const last=state.history.at(-1);if(last&&Math.abs(last.time-point.time)<1e-7)state.history[state.history.length-1]=point;else state.history.push(point);}
 function event(message,warning=false){state.events.unshift({time:fmtTime(state.time),message,warning});state.events=state.events.slice(0,100);renderEvents()}
-function renderEvents(){}
-function buildQueue(){let order=cargo.slice();if(['port','pump'].includes(state.scenario))order.sort((a,b)=>a.z-b.z||b.tier-a.tier||a.bay-b.bay);else order.sort((a,b)=>b.tier-a.tier||a.bay-b.bay||Math.abs(a.z)-Math.abs(b.z)||a.z-b.z);state.queue=order.map(c=>c.id)}
-function reset(){state.running=false;state.time=0;state.removed=[];state.tanks=[600,600,600,600];state.history=[];state.events=[];state.transfer=null;state.applied=0;state.transferred=0;state.notice=null;state.selected=null;simAccumulator=0;recommendation=null;buildQueue();event('선박 모델 준비 완료');recordHistory();update();}
-function recommend(){
+function renderEvents(){const e=$('#operationLog');if(e)e.innerHTML=state.events.map(v=>`<li><time>${v.time}</time><span>${v.message}</span></li>`).join('');}
+function buildQueue(){if(customOrder){state.queue=[...customOrder];return;}let order=cargo.slice();if(['port','pump'].includes(state.scenario))order.sort((a,b)=>a.z-b.z||b.tier-a.tier||a.bay-b.bay);else order.sort((a,b)=>b.tier-a.tier||a.bay-b.bay||Math.abs(a.z)-Math.abs(b.z)||a.z-b.z);state.queue=order.map(c=>c.id)}
+function reset(){state.running=false;state.time=0;state.removed=[];state.tanks=[...config.levels];lastDecision=null;lastDecisionAt=-Infinity;state.history=[];state.events=[];state.transfer=null;state.applied=0;state.transferred=0;state.notice=null;state.selected=null;simAccumulator=0;recommendation=null;buildQueue();event(`선박 모델 준비 완료 · ${Decision.WAVES[config.wave??'off'].label} · 동일 위상 파도`);recordHistory();recommend();update();}
+function recommendRule(){
  recommendation=null;state.notice=null;
  if(state.transfer)return;
  const m=metrics();if(!m.valid){state.notice='가정한 계산 범위를 벗어나 자동 이송을 중지했습니다.';return;}
@@ -36,13 +45,21 @@ function recommend(){
   const leverage=Math.abs(tanks[to].z-tanks[from].z),amount=Math.min(Math.abs(m.mz)/leverage,state.tanks[from]-MODEL.minTank,MODEL.maxTank-state.tanks[to]);
   if(amount<.01)continue;
   const levels=[...state.tanks];levels[from]-=amount;levels[to]+=amount;const predictedState=metrics(true,levels);if(!predictedState.valid)continue;
-  const rate=state.scenario==='pump'?.35:2.5;
+  const rate=state.scenario==='pump'?.35:config.rate;
   candidates.push({from,to,amount,rate,predicted:predictedState.heel,duration:amount/rate,score:Math.abs(predictedState.heel)+Math.abs(predictedState.trim)*.01});
  }
  candidates.sort((a,b)=>a.score-b.score||a.amount-b.amount||a.from-b.from||a.to-b.to);
  recommendation=candidates[0]??null;if(!recommendation)state.notice='수위 제한으로 이송 가능한 탱크 조합이 없습니다.';
 }
-function approve(refresh=true){if(state.transfer)return;recommend();if(!recommendation)return;state.transfer={...recommendation,remaining:recommendation.amount};state.applied++;event(`${tanks[recommendation.from].id} → ${tanks[recommendation.to].id} ${recommendation.amount.toFixed(1)} t 승인`);recommendation=null;recordHistory();if(refresh)update();}
+function decisionInput(){return {levels:[...state.tanks],removed:[...state.removed],queue:[...state.queue],acc:simAccumulator,transfer:state.transfer};}
+function recommend(){
+ if(strategy==='rule'){recommendRule();return;}
+ recommendation=null;state.notice=null;if(state.transfer)return;
+ if(!metrics().valid){state.notice='가정한 계산 범위를 벗어나 자동 이송을 중지했습니다.';return;}
+ if(state.time-lastDecisionAt>=5||!lastDecision){lastDecision=Decision.choose(Decision.makeModel(cargo),decisionInput(),config);lastDecisionAt=state.time;}
+ recommendation=lastDecision.action?{...lastDecision.action}:null;
+}
+function approve(refresh=true){if(state.transfer)return;lastDecisionAt=-Infinity;recommend();if(!recommendation)return;state.transfer={...recommendation,remaining:recommendation.amount};state.applied++;event(`${tanks[recommendation.from].id} → ${tanks[recommendation.to].id} ${recommendation.amount.toFixed(1)} t ${$('#auto').checked?'시연 자동 승인':'담당자 승인'} · ${strategy==='predictive'?'60초 예측 비교':'현재 상태 규칙'}`);recommendation=null;recordHistory();if(refresh)update();}
 function advance(dt){
  if(!state.running||!Number.isFinite(dt)||dt<=0)return;
  let remaining=dt*state.speed*10;
@@ -52,8 +69,8 @@ function advance(dt){
   state.time+=step;remaining-=step;
   if(state.transfer){
    const tr=state.transfer,m=metrics(),delta=tanks[tr.to].z-tanks[tr.from].z;
-   if(m.mz*delta>=0){state.transfer=null;event('하중 변화로 기존 이송안을 종료하고 다시 평가합니다.');}
-   else {const amount=Math.max(0,Math.min(tr.remaining,tr.rate*step,Math.abs(m.mz/delta),state.tanks[tr.from]-MODEL.minTank,MODEL.maxTank-state.tanks[tr.to]));state.tanks[tr.from]-=amount;state.tanks[tr.to]+=amount;tr.remaining-=amount;state.transferred+=amount;if(tr.remaining<1e-7||amount<1e-9||Math.abs(metrics().mz)<1e-7){state.transfer=null;event('이송 완료 · 현재 상태 재평가');}}
+   if(!tr.predictive&&m.mz*delta>=0){state.transfer=null;event('하중 변화로 기존 이송안을 종료하고 다시 평가합니다.');}
+   else {const amount=Math.max(0,Math.min(tr.remaining,tr.rate*step,(tr.predictive?Infinity:Math.abs(m.mz/delta)),state.tanks[tr.from]-MODEL.minTank,MODEL.maxTank-state.tanks[tr.to]));state.tanks[tr.from]-=amount;state.tanks[tr.to]+=amount;tr.remaining-=amount;state.transferred+=amount;if(tr.remaining<1e-7||amount<1e-9||(!tr.predictive&&Math.abs(metrics().mz)<1e-7)){state.transfer=null;event('이송 완료 · 현재 상태 재평가');}}
   }
   if(state.removed.length<MAX_STEPS){simAccumulator+=step;if(simAccumulator>=STEP_SECONDS-1e-7){simAccumulator=0;const next=state.queue.find(id=>!state.removed.includes(id));if(next)state.removed.push(next);}}
   recommend();if($('#auto').checked&&recommendation)approve(false);
@@ -67,21 +84,104 @@ function update(){
  const m=metrics(),valid=m.valid,angle=valid?Math.abs(m.heel):null;
  $('#heel').textContent=valid?angle.toFixed(2):'—';$('#ballast').textContent=Math.round(state.tanks.reduce((a,b)=>a+b,0)).toLocaleString();$('#progress').textContent=Math.round(state.removed.length/MAX_STEPS*100);$('#progressBar').style.width=`${state.removed.length/MAX_STEPS*100}%`;$('#heelBar').style.width=`${valid?Math.min(100,angle/3*100):100}%`;$('#cargoCount').textContent=`${MAX_STEPS-state.removed.length} / ${MAX_STEPS}`;$('#elapsed').textContent=`${fmtTime(state.time)} 경과`;$('#chartTime').textContent=fmtTime(state.time);
  $('#play').textContent=state.running?'Ⅱ 일시정지':complete()?'↺ 다시 시뮬레이션':state.removed.length===MAX_STEPS&&!state.transfer?'조정 승인 대기':'▶ 시뮬레이션 시작';
- const warn=!valid||angle>1.5;$('#statusPill').textContent=!valid?'● 모델 범위 초과':warn?'● 시연 기준 초과':'● 시연 기준 내';$('#statusPill').classList.toggle('warn',warn);$('#heelNote').textContent=`추정 GM ${m.gm.toFixed(2)} m`;$('#heelNote').style.color=warn?'var(--amber)':'var(--mint)';
- const phase=$('#operationPhase');if(phase)phase.textContent=state.notice??(state.removed.length<MAX_STEPS?(state.running?'화물을 하역하고 있습니다.':'하역 대기 · 시작 버튼을 눌러주세요.'):state.transfer?(state.running?'하역 100% · 마지막 평형수 조정 중':'하역 100% · 평형수 조정 일시정지'):recommendation?'하역 100% · 남은 추천안 승인 대기':'하역과 평형수 조정 모두 완료');
- renderRecommendation();drawChart();updateModel();if(state.view==='2d')drawPlan();
+ const warn=!valid||angle>config.threshold;$('#statusPill').textContent=!valid?'● 모델 범위 초과':warn?'● 시연 기준 초과':'● 시연 기준 내';$('#statusPill').classList.toggle('warn',warn);$('#heelNote').textContent=`추정 GM ${m.gm.toFixed(2)} m`;$('#heelNote').style.color=warn?'var(--amber)':'var(--mint)';
+ const phase=$('#operationPhase');if(phase)phase.textContent=state.notice??(state.removed.length<MAX_STEPS?(state.running?'화물을 하역하고 있습니다.':state.time>0?'하역 일시정지 · 시작 버튼으로 재개하세요.':'하역 대기 · 시작 버튼을 눌러주세요.'):state.transfer?(state.running?'하역 100% · 마지막 평형수 조정 중':'하역 100% · 평형수 조정 일시정지'):recommendation?'하역 100% · 남은 추천안 승인 대기':'하역과 평형수 조정 모두 완료');
+ renderWave();renderRecommendation();drawChart();renderDecision();updateModel();if(state.view==='2d')drawPlan();
 }
-function renderRecommendation(){const r=recommendation,tr=state.transfer;$('#approve').disabled=!r;$('#play').disabled=state.removed.length===MAX_STEPS&&!state.transfer&&!!r;$('#approve').textContent=tr?'↻ 밸러스트 이송 진행 중':'✓ 추천 운전안 적용';if(tr){$('#recommendStatus').textContent='승인된 운전안 실행 중';$('#recommendTitle').textContent='탱크 간 평형수를 이송합니다.';$('#recommendText').textContent=`남은 이송량 ${tr.remaining.toFixed(0)} t · 유량 ${tr.rate} t/s · 시뮬레이션 속도로 진행됩니다.`}else if(r){$('#recommendStatus').textContent='새로운 운전안 제안';$('#recommendTitle').textContent='하중 변화에 대응할 시간입니다.';$('#recommendText').textContent=`${metrics().heel>0?'우현':'좌현'} 쪽 하중 편차를 줄이기 위해 반대편 탱크로 평형수 이송을 제안합니다.`}else{$('#recommendStatus').textContent=state.notice?'운전 제한 확인':'운전 상태 모니터링 중';$('#recommendTitle').textContent=state.notice?'이송을 진행할 수 없습니다.':'현재 추가 조정이 필요하지 않습니다.';$('#recommendText').textContent=state.notice??'현재의 하중과 수위를 확인하고 있습니다. 조건이 바뀌면 가능한 조정안을 다시 계산합니다.'}const active=tr||r;$('#fromTank').textContent=active?tanks[active.from].name:'좌현 선수 탱크';$('#toTank').textContent=active?tanks[active.to].name:'우현 선수 탱크';$('#fromValue').innerHTML=`${state.tanks[active?.from??0].toFixed(0)} <em>t</em>`;$('#toValue').innerHTML=`${state.tanks[active?.to??1].toFixed(0)} <em>t</em>`;$('#transferValue').textContent=active?`${(tr?tr.remaining:r.amount).toFixed(0)} t`:'대기';$('#predictedHeel').textContent=active?`${Math.abs(active.predicted).toFixed(2)}°`:'—';$('#predictedTime').textContent=active?`${Math.ceil(tr?tr.remaining/tr.rate:r.duration)}초`:'—';}
+function renderRecommendation(){const r=recommendation,tr=state.transfer;$('#approve').disabled=!r;$('#play').disabled=state.removed.length===MAX_STEPS&&!state.transfer&&!!r;$('#approve').textContent=tr?'↻ 밸러스트 이송 진행 중':'✓ 추천 운전안 적용';if(tr){$('#recommendStatus').textContent='승인된 운전안 실행 중';$('#recommendTitle').textContent='탱크 간 평형수를 이송합니다.';$('#recommendText').textContent=`남은 이송량 ${tr.remaining.toFixed(0)} t · 유량 ${tr.rate} t/s · 시뮬레이션 속도로 진행됩니다.`}else if(r){$('#recommendStatus').textContent='새로운 운전안 제안';$('#recommendTitle').textContent='하중 변화에 대응할 시간입니다.';$('#recommendText').textContent=`${r.predictive?'예정 하역과 이송시간을 반영한 60초 후보 비교 결과입니다. 아래 예측 근거를 확인한 뒤 승인하세요.':`${metrics().heel>0?'우현':'좌현'} 쪽 현재 하중 편차를 줄이는 규칙 기반 추천입니다.`}`}else{$('#recommendStatus').textContent=state.notice?'운전 제한 확인':'운전 상태 모니터링 중';$('#recommendTitle').textContent=state.notice?'이송을 진행할 수 없습니다.':'현재 추가 조정이 필요하지 않습니다.';$('#recommendText').textContent=state.notice??'현재의 하중과 수위를 확인하고 있습니다. 조건이 바뀌면 가능한 조정안을 다시 계산합니다.'}const active=tr||r;if($('#predictedCaption'))$('#predictedCaption').textContent=active?.predictive?'+60초 예상 기울기':'이송량 적용 후 기울기';$('#fromTank').textContent=active?tanks[active.from].name:'좌현 선수 탱크';$('#toTank').textContent=active?tanks[active.to].name:'우현 선수 탱크';$('#fromValue').innerHTML=`${state.tanks[active?.from??0].toFixed(0)} <em>t</em>`;$('#toValue').innerHTML=`${state.tanks[active?.to??1].toFixed(0)} <em>t</em>`;$('#transferValue').textContent=active?`${(tr?tr.remaining:r.amount).toFixed(0)} t`:'대기';$('#predictedHeel').textContent=active?`${Math.abs(active.predicted).toFixed(2)}°`:'—';$('#predictedTime').textContent=active?`${Math.ceil(tr?tr.remaining/tr.rate:r.duration)}초`:'—';}
+function renderWave(){
+ const m=metrics(),wave=Decision.waveAt(state.time,config.wave,config.environment),instant=Decision.observedHeel(m.heel,state.time,config.wave,config.environment);
+ if(!$('#instantHeel'))return;
+ $('#instantHeel').textContent=instant===null?'계산 불가':`${instant>=0?'+':''}${instant.toFixed(2)}°`;
+ $('#waveHeel').textContent=`${wave>=0?'+':''}${wave.toFixed(2)}°`;
+ $('#waveStatus').textContent=`${config.environment?config.environment.source+' · 환경 적용':Decision.WAVES[config.wave??'off'].label} · 가상 시간 ${state.time.toFixed(1)}초 · 시연 기준 ${config.threshold}°`;
+ $('#instantHeel').style.color=instant!==null&&Math.abs(instant)>config.threshold?'#edbd83':'#a7baff';
+}
 function drawChart(){
- const mid=52,values=state.history,finite=values.flatMap(v=>[v.heel,v.baseline]).filter(Number.isFinite),max=Math.max(2,...finite.map(Math.abs)),scale=42/max,end=Math.max(STEP_SECONDS,state.time);let svg='';
+ const mid=52,values=state.history,finite=values.flatMap(v=>[v.heel,v.baseline,v.instant]).filter(Number.isFinite),max=Math.max(2,...finite.map(Math.abs)),scale=42/max,end=Math.max(STEP_SECONDS,state.time);let svg='';
  for(let i=0;i<5;i++){const y=10+i*21;svg+=`<line x1="30" y1="${y}" x2="648" y2="${y}" stroke="${i===2?'#567d85':'#263b49'}" stroke-width="${i===2?1:.6}"/><text x="0" y="${y+3}" fill="#648294" font-size="8">${((mid-y)/scale).toFixed(1)}</text>`;}
  const path=key=>{let open=false;return values.map(v=>{if(!Number.isFinite(v[key])){open=false;return '';}const cmd=open?'L':'M';open=true;return `${cmd}${30+v.time/end*615},${mid-v[key]*scale}`;}).join(' ');};
- svg+=`<path d="${path('baseline')}" fill="none" stroke="#b99572" stroke-width="1.6" stroke-dasharray="4 4"/><path d="${path('heel')}" fill="none" stroke="#63e4c0" stroke-width="2"/>`;$('#chart').innerHTML=svg;
- const summary=$('#comparisonSummary');if(summary){const peak=key=>Math.max(0,...values.map(v=>v[key]).filter(Number.isFinite).map(Math.abs));summary.textContent=`기록된 최대 기울기 · 현재 ${peak('heel').toFixed(2)}° / 무조정 ${peak('baseline').toFixed(2)}°`;}
+ svg+=`<path d="${path('instant')}" fill="none" stroke="#8ca9ff" stroke-width="1" opacity=".8"/><path d="${path('baseline')}" fill="none" stroke="#b99572" stroke-width="1.6" stroke-dasharray="4 4"/><path d="${path('heel')}" fill="none" stroke="#63e4c0" stroke-width="2"/>`;$('#chart').innerHTML=svg;
+ const summary=$('#comparisonSummary');if(summary){const peak=key=>Math.max(0,...values.map(v=>v[key]).filter(Number.isFinite).map(Math.abs));summary.textContent=`기록된 최대 |기울기| · 하역 ${peak('heel').toFixed(2)}° / 순간 ${peak('instant').toFixed(2)}° / 무조정 하역 ${peak('baseline').toFixed(2)}°`;}
 }
+let displayedDecisionAt=-Infinity;
+function renderDecision(){
+ if(!$('#forecastReason'))return;
+ if(state.running&&state.time-displayedDecisionAt<5)return;
+ displayedDecisionAt=state.time;
+ const input=decisionInput(),model=Decision.makeModel(cargo);
+ const d=Decision.choose(model,{...input,transfer:null},config);
+ if(!d.valid){$('#forecastReason').textContent='계산 범위 초과 · 예측과 추천 중지';$('#forecastChart').innerHTML='';$('#alternatives').innerHTML='';return;}
+ const hold=Decision.forecast(model,input,config);
+ const active=state.transfer?{...state.transfer,amount:state.transfer.remaining}:recommendation;
+ const selected=active?Decision.forecast(model,{...input,transfer:null},config,active):hold;
+ $('#forecastReason').textContent=state.transfer?`승인된 이송 진행 중 · 남은 ${state.transfer.remaining.toFixed(1)} t. 완료 후 다음 운전안을 재평가합니다.`:strategy==='rule'?`현재 상태 기반 추천 · 아래 후보 비교는 60초 예측 참고 자료입니다. 승인 판단은 현재 기울기에 반응합니다.`:recommendation?`선택 근거: 수위 80–1,120 t를 지키는 후보 중 예측 최대 기울기와 이송량을 함께 평가했습니다. 현재 수위 유지 ${hold.peak.toFixed(2)}° → 추천 ${selected.peak.toFixed(2)}°. 마지막 평가 ${fmtTime(lastDecisionAt)}.`:'현재 수위 유지 · 60초 예측에서 충분한 개선을 보이는 이송 후보가 없습니다.';
+ const points=[...hold.points,...selected.points];const max=Math.max(config.threshold,...points.map(v=>Math.abs(v.heel)),.5)*1.15;
+ const y=v=>75-v/max*55;
+ let svg=`<line x1="40" y1="75" x2="630" y2="75" stroke="#526c7a"/><text x="4" y="23" fill="#a8bdc7" font-size="10">${max.toFixed(1)}°</text><text x="4" y="130" fill="#a8bdc7" font-size="10">−${max.toFixed(1)}°</text>`;
+ for(const v of [config.threshold,-config.threshold])svg+=`<line x1="40" y1="${y(v)}" x2="630" y2="${y(v)}" stroke="#b99572" stroke-dasharray="2 5"/>`;
+ for(let t=config.interval-simAccumulator,n=state.removed.length;t<=60&&n<state.queue.length;t+=config.interval,n++)svg+=`<line x1="${40+t/60*590}" y1="15" x2="${40+t/60*590}" y2="132" stroke="#35505d"/>`;
+ for(const [r,color,dash] of [[hold,'#d5ad83','5 4'],[selected,'#63e4c0','']])svg+=`<path d="${r.points.map((v,i)=>`${i?'L':'M'}${40+v.time/60*590},${y(v.heel)}`).join(' ')}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="${dash}"/>`;
+ svg+='<text x="40" y="148" fill="#a8bdc7" font-size="10">現在</text><text x="590" y="148" fill="#a8bdc7" font-size="10">+60초</text>'.replace('現在','현재');
+ $('#forecastChart').innerHTML=svg;
+ const rows=state.transfer?[{action:active,result:selected}]:[d.candidates.find(c=>!c.action),...d.candidates.filter(c=>c.action).slice(0,3)].filter(Boolean);
+ $('#alternatives').innerHTML=rows.map(c=>`<tr><td>${c.action?`${tanks[c.action.from].id} → ${tanks[c.action.to].id} · ${c.action.amount.toFixed(0)} t`:'현재 수위 유지'}${state.transfer?' · 실행 중':d.selected===c?' · 탐색 선택':''}</td><td>${c.result.peak.toFixed(2)}°</td><td>${c.result.exceed}초</td><td>${c.result.moved.toFixed(1)} t</td></tr>`).join('');
+}
+function downloadJSON(name,data){downloadFile(name,JSON.stringify(data,null,2),'application/json');}
+function downloadFile(name,content,type){const url=URL.createObjectURL(new Blob([content],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+function invalidateComparison(){
+ comparisonWorker?.terminate();comparisonWorker=null;comparisonResult=null;displayedDecisionAt=-Infinity;
+ $('#experimentRows').innerHTML='';$('#experimentStatus').textContent='조건이 바뀌었습니다. 비교 실험을 다시 실행하세요.';$('#exportResults').disabled=true;$('#runComparison').disabled=false;
+}
+function readSettings(){
+ const get=(id,min,max)=>{const raw=$('#'+id).value;if(!raw.trim())throw Error('설정값을 모두 입력하세요.');const v=Number(raw);if(!Number.isFinite(v)||v<min||v>max)throw Error(`${$('#'+id).parentElement.textContent.trim()}: ${min}–${max} 범위로 입력하세요.`);return v;};
+ const interval=get('inputInterval',5,120);if(interval%1)throw Error('하역 간격은 정수 초로 입력하세요.');
+ const wave=$('#waveLevel').value;if(!Decision.WAVES[wave])throw Error('파도 세기를 선택하세요.');
+ return {environment:config.environment??null,wave,interval,rate:get('inputRate',.1,10),threshold:get('inputThreshold',.1,10),horizon:60,levels:[0,1,2,3].map(i=>get('level'+i,80,1120))};
+}
+function parseCargoCSV(text){
+ const lines=text.replace(/^\uFEFF/,'').trim().split(/\r?\n/);
+ if(lines.shift()?.trim()!=='id,weight,order')throw Error('첫 행은 id,weight,order 이어야 합니다.');
+ if(lines.length!==72)throw Error('72개 화물을 모두 입력하세요.');
+ const seen=new Set(),orders=new Set(),parsed=[];
+ for(const line of lines){const cells=line.split(',').map(v=>v.trim());if(cells.length!==3)throw Error('각 행에는 ID, 중량, 순서 3개 값이 필요합니다.');const [id,w,o]=cells;const source=cargo.find(c=>c.id===id),weight=Number(w),order=Number(o);
+  if(!source||seen.has(id)||!w||!o||!Number.isFinite(weight)||weight<1||weight>100||!Number.isInteger(order)||order<1||order>72||orders.has(order))throw Error('ID 중복·누락, 중량(1–100 t), 순서(1–72)를 확인하세요.');
+  seen.add(id);orders.add(order);parsed.push({...source,weight,order});
+ }
+ parsed.sort((a,b)=>a.order-b.order);
+ for(const c of parsed)if(parsed.some(top=>top.bay===c.bay&&top.row===c.row&&top.tier>c.tier&&top.order>c.order))throw Error('하역 순서 오류: 같은 위치의 위쪽 화물을 먼저 내려야 합니다.');
+ return parsed;
+}
+function initDecisionUI(){
+ try{const saved=localStorage.getItem('harbor-twin.wave');if(Decision.WAVES[saved]){config.wave=saved;$('#waveLevel').value=saved;}}catch{}
+
+ $('#applySettings').onclick=()=>{try{const next=readSettings();config=next;try{localStorage.setItem('harbor-twin.wave',next.wave);}catch{}STEP_SECONDS=next.interval;strategy=$('#strategy').value;invalidateComparison();reset();$('#inputMessage').textContent='운전 조건을 적용하고 초기화했습니다. 비교 실험에도 같은 조건이 적용됩니다.';}catch(error){$('#inputMessage').textContent=error.message;}};
+ $('#waveLevel').onchange=()=>{$('#inputMessage').textContent='파도 세기 변경은 설정 적용 버튼을 누르면 반영됩니다.';};
+ $('#strategy').onchange=()=>{$('#inputMessage').textContent='추천 방식 변경은 설정 적용 버튼을 누르면 반영됩니다.';};
+ $('#downloadPlan').onclick=()=>{buildQueue();downloadFile('harbor-cargo.csv','id,weight,order\n'+state.queue.map((id,i)=>`${id},${cargo.find(c=>c.id===id).weight},${i+1}`).join('\n'),'text/csv;charset=utf-8');};
+ $('#cargoFile').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>100000)throw Error('CSV는 100 KB 이하로 입력하세요.');const parsed=parseCargoCSV(await file.text());for(const c of parsed)cargo.find(v=>v.id===c.id).weight=c.weight;customOrder=parsed.map(c=>c.id);referenceKM=Decision.makeModel(cargo).km;invalidateComparison();reset();$('#scenario').disabled=true;$('#dataSource').textContent='사용자 CSV · 가상 위치 / 입력 중량·순서';$('#inputMessage').textContent='CSV 적용 완료 · 학습·검증된 실제 선박 모델은 아닙니다.';}catch(error){$('#inputMessage').textContent=error.message;}finally{e.target.value='';}};
+ $('#restorePlan').onclick=()=>{originalCargo.forEach((c,i)=>Object.assign(cargo[i],c));customOrder=null;referenceKM=Decision.makeModel(cargo).km;$('#scenario').disabled=false;$('#dataSource').textContent='합성 예제 · 72개 화물';invalidateComparison();reset();$('#inputMessage').textContent='합성 화물 예제를 복원했습니다. 운전 조건은 현재 적용값을 유지합니다.';};
+ $('#runComparison').onclick=()=>{
+  $('#runComparison').disabled=true;$('#exportResults').disabled=true;$('#experimentStatus').textContent='같은 조건으로 3가지 방식을 계산 중입니다…';
+  const payload={cargo:cargo.map(c=>({...c})),queue:[...state.queue],cfg:{...config,levels:[...config.levels]}};
+  try{comparisonWorker=new Worker('./comparison-worker.mjs?v=env2',{type:'module'});
+   const fail=message=>{$('#experimentStatus').textContent=message;$('#runComparison').disabled=false;comparisonWorker?.terminate();comparisonWorker=null;};
+   comparisonWorker.onerror=()=>fail('비교 계산을 시작하지 못했습니다. 로컬 HTTP 서버 또는 정적 웹 호스팅에서 다시 시도하세요.');
+   comparisonWorker.onmessage=({data})=>{if(data.error){fail(data.error);return;}comparisonResult={version:'harbor-twin-wave-1',createdAt:new Date().toISOString(),source:customOrder?'사용자 CSV / 가상 위치':'합성 예제',model:'고정 KM / 물리 모델 / 학습형 AI 미구현',conditions:payload,results:data.results};
+    const labels={none:'무조정',rule:'현재 상태 기반 규칙',predictive:'60초 예측 기반 탐색'};
+    $('#experimentRows').innerHTML=data.results.map(r=>r.peak===undefined?`<tr><td>${labels[r.mode]}</td><td colspan="9">${r.reason} · 미완료</td></tr>`:`<tr><td>${labels[r.mode]}</td><td>${r.peak.toFixed(2)}°</td><td>${r.exceed}초</td><td>${r.instantPeak.toFixed(2)}°</td><td>${r.instantExceed.toFixed(2)}초</td><td>${r.moved.toFixed(1)} t</td><td>${r.pumpSeconds}초</td><td>${r.starts}</td><td>${r.violations}</td><td>${r.complete?'완료':'시간 제한'}</td></tr>`).join('');
+    $('#experimentStatus').textContent=`비교 완료 · ${config.environment?config.environment.source+' / 파고 '+config.environment.height+' m':Decision.WAVES[config.wave??'off'].label} / 동일 위상·동일 시간 구간 · 하역 간격 ${config.interval}초 / 유량 ${config.rate} t/s / 시연 기준 ${config.threshold}° / 총 초기 평형수 ${config.levels.reduce((a,b)=>a+b,0)} t. 낮은 기울기와 적은 이송량의 균형을 비교하세요.`;
+    $('#exportResults').disabled=false;$('#runComparison').disabled=false;comparisonWorker.terminate();comparisonWorker=null;};
+   comparisonWorker.postMessage(payload);
+  }catch(error){$('#experimentStatus').textContent=error.message;$('#runComparison').disabled=false;}
+ };
+ $('#exportResults').onclick=()=>{if(comparisonResult)downloadJSON('harbor-comparison.json',comparisonResult);};
+}
+
 // Shared vessel coordinates drive both the 3D model and 2D drawing.
+let ocean;const oceanDecor=[];
 let scene,camera,renderer,ship,water,grid,containerMeshes=[],tankMeshes=[],pickables=[],deckMeshes=[],facilityMeshes=[],raycaster=new THREE.Raycaster(),pointer=new THREE.Vector2();let yaw=.72,pitch=.48,distance=170,drag=null,hasMoved=false,webgl=true;
-try{scene=new THREE.Scene();scene.fog=new THREE.FogExp2(0x0b1824,.0022);camera=new THREE.PerspectiveCamera(34,1,.1,1500);renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setClearColor(0x091722,0);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;$('#scene').append(renderer.domElement);scene.add(new THREE.HemisphereLight(0xb9e8ff,0x192934,2.7));const sun=new THREE.DirectionalLight(0xfff4df,3.2);sun.position.set(-40,100,55);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.camera.left=-110;sun.shadow.camera.right=110;sun.shadow.camera.top=80;sun.shadow.camera.bottom=-80;scene.add(sun);const rim=new THREE.DirectionalLight(0x52daba,2);rim.position.set(20,15,-60);scene.add(rim);ship=new THREE.Group();scene.add(ship);
+try{scene=new THREE.Scene();scene.fog=new THREE.FogExp2(0x0b1824,.0022);camera=new THREE.PerspectiveCamera(34,1,.1,12000);renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setClearColor(0x091722,0);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;$('#scene').append(renderer.domElement);scene.add(new THREE.HemisphereLight(0xb9e8ff,0x192934,2.7));const sun=new THREE.DirectionalLight(0xfff4df,3.2);sun.position.set(-40,100,55);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.camera.left=-110;sun.shadow.camera.right=110;sun.shadow.camera.top=80;sun.shadow.camera.bottom=-80;scene.add(sun);const rim=new THREE.DirectionalLight(0x52daba,2);rim.position.set(20,15,-60);scene.add(rim);ship=new THREE.Group();scene.add(ship);
 const mat=(color,extra={})=>new THREE.MeshStandardMaterial({color,roughness:.62,metalness:.25,...extra});const hullmat=mat(0x344e61),deckmat=mat(0x526879),lowerHull=mat(0x142a3b),lineMat=mat(0x9cbac4);
 function box(w,h,d,color,x,y,z,parent=ship){const o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),typeof color==='number'?mat(color):color);o.position.set(x,y,z);o.castShadow=true;o.receiveShadow=true;parent.add(o);return o}
 function hullShape(width,length){const shape=new THREE.Shape();shape.moveTo(-length/2,-width*.40);shape.lineTo(length*.34,-width/2);shape.quadraticCurveTo(length*.51,-width*.36,length/2,0);shape.quadraticCurveTo(length*.51,width*.36,length*.34,width/2);shape.lineTo(-length/2,width*.40);shape.quadraticCurveTo(-length*.55,0,-length/2,-width*.40);return shape}
@@ -94,14 +194,26 @@ const colors=[0x59899d,0x487382,0x476f9d,0x4b9590,0xb18c67,0x718494,0x426d84,0x6
 tanks.forEach((t,i)=>{const mesh=box(28,4,5,mat(0x4bd8b4,{transparent:true,opacity:.65,emissive:0x0c5d4c,emissiveIntensity:.5}),t.x,-1,t.z);mesh.userData={kind:'tank',index:i,deck:'tank'};tankMeshes.push(mesh);pickables.push(mesh);const outline=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(28,7,5)),new THREE.LineBasicMaterial({color:0x63e4c0,transparent:true,opacity:.7}));outline.position.set(t.x,-.5,t.z);ship.add(outline);tankMeshes.push(outline)});
 // Accommodation block, bridge, funnel and service deck.
 const block=box(14,15,22,0xb9c9ce,-50,14,0);facilityMeshes.push(block);block.userData={kind:'facility',deck:'facility',name:'선교·거주구'};pickables.push(block);const bridge=box(17,4,25,0xd8e1df,-49,23,0);facilityMeshes.push(bridge);for(let side of [-1,1])for(let x=-55;x<-42;x+=2.1)box(1.4,1.7,.1,0x1c4558,x,23.2,side*12.56);for(let floor=0;floor<3;floor++)for(let x=-55;x<-44;x+=2.5)box(1.2,1.2,.1,0x345a6b,x,11+floor*3.7,11.05);box(8,6,8,0x253b4e,-55,27,0);box(8,.8,8,0x64d8bd,-55,30.2,0);box(.25,9,.25,0xb8d1d3,-44,29,0);box(5,.15,.2,0xb8d1d3,-44,32,0);box(10,.6,10,0x677e87,48,7,0);for(const z of [-9,9])box(2,1.4,1.4,0x3e5562,53,7.5,z);const engine=box(12,6,15,0xcd965b,-50,0,0);engine.userData={kind:'facility',deck:'facility',name:'기관실 · 펌프 / BWTS'};pickables.push(engine);facilityMeshes.push(engine);
-water=new THREE.Mesh(new THREE.PlaneGeometry(900,900),new THREE.MeshStandardMaterial({color:0x0c2531,transparent:true,opacity:.8,roughness:.3,metalness:.45}));water.rotation.x=-Math.PI/2;water.position.y=-4;water.receiveShadow=true;scene.add(water);grid=new THREE.GridHelper(600,75,0x254656,0x18313f);grid.position.y=-3.9;grid.material.transparent=true;grid.material.opacity=.36;scene.add(grid);
-for(let i=0;i<9;i++){const curve=new THREE.EllipseCurve(0,0,74+i*13,23+i*9,0,Math.PI*2,false,0);const points=curve.getPoints(100).map(p=>new THREE.Vector3(p.x,-3.8,p.y));const ring=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:0x4e8c97,transparent:true,opacity:.07-i*.005}));scene.add(ring)}
+ocean=createOcean(renderer);water=ocean.mesh;scene.add(water);grid=new THREE.GridHelper(600,75,0x254656,0x18313f);grid.position.y=-3.9;grid.material.transparent=true;grid.material.opacity=.36;scene.add(grid);
+for(let i=0;i<9;i++){const curve=new THREE.EllipseCurve(0,0,74+i*13,23+i*9,0,Math.PI*2,false,0);const points=curve.getPoints(100).map(p=>new THREE.Vector3(p.x,-3.8,p.y));const ring=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:0x4e8c97,transparent:true,opacity:.07-i*.005}));scene.add(ring);oceanDecor.push(ring)}
 ship.children.filter(o=>o.geometry?.type==='BoxGeometry'&&o.position.x < -40&&!containerMeshes.includes(o)&&!tankMeshes.includes(o)).forEach(o=>{if(!facilityMeshes.includes(o))facilityMeshes.push(o)});
 pickables=pickables.filter(o=>o.userData.kind!=='facility');
 const observer=new ResizeObserver(()=>{const e=$('#scene');if(e.clientWidth&&e.clientHeight){renderer.setSize(e.clientWidth,e.clientHeight);camera.aspect=e.clientWidth/e.clientHeight;camera.updateProjectionMatrix()}});observer.observe($('#scene'));
 renderer.domElement.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY};hasMoved=false;renderer.domElement.setPointerCapture(e.pointerId)});renderer.domElement.addEventListener('pointermove',e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)>4)hasMoved=true;yaw+=dx*.006;pitch=Math.max(.1,Math.min(1.25,pitch+dy*.005));drag.x=e.clientX;drag.y=e.clientY});renderer.domElement.addEventListener('pointerup',e=>{if(!hasMoved){const rect=renderer.domElement.getBoundingClientRect();pointer.set((e.clientX-rect.left)/rect.width*2-1,-(e.clientY-rect.top)/rect.height*2+1);raycaster.setFromCamera(pointer,camera);const hits=raycaster.intersectObjects(pickables.filter(m=>m.visible),false);if(hits.length)selectObject(hits[0].object.userData)}drag=null});renderer.domElement.addEventListener('pointercancel',()=>{drag=null;hasMoved=true});renderer.domElement.addEventListener('lostpointercapture',()=>{drag=null});renderer.domElement.addEventListener('wheel',e=>{e.preventDefault();distance=Math.max(90,Math.min(300,distance+e.deltaY*.08))},{passive:false});
 }catch(error){webgl=false;$('#scene').innerHTML='<div style="padding:130px 30px;color:#9db7c7">此장치에서 3D 화면을 초기화하지 못했습니다. 2D 도면을 이용해 주세요.</div>'.replace('此','이 ');console.error(error)}
-function updateModel(){if(!ship)return;const m=metrics();ship.rotation.x=THREE.MathUtils.degToRad((m.heel??0)*8);ship.rotation.z=-Math.atan(m.trim/180)*8;const interior=['tank','facility','lower'].includes(state.deck);ship.children.forEach(o=>{if(o.geometry?.type==='ExtrudeGeometry'){o.material.transparent=interior||state.exploded;o.material.opacity=interior?.14:state.exploded?.32:1;o.material.depthWrite=!interior}});containerMeshes.forEach((mesh,i)=>{const c=cargo[i];mesh.visible=!state.removed.includes(c.id)&&(state.deck==='all'||state.deck==='upper'&&c.tier>0||state.deck==='lower'&&c.tier===0);mesh.position.y=9.1+c.tier*4.8+(state.exploded?c.tier*11+14:0)});tankMeshes.forEach((mesh,i)=>{mesh.visible=state.deck==='all'||state.deck==='tank'||state.exploded;if(i%2===0){const index=i/2;const fill=state.tanks[index]/MODEL.tankCapacity;mesh.scale.y=7*fill/4;mesh.position.y=-4+7*fill/2}});facilityMeshes.forEach(mesh=>{mesh.visible=state.deck==='all'||state.deck==='facility'||state.exploded});}
+let weatherEffects;
+function applyWeather(){
+ if(!scene)return;weatherEffects??=createWeatherEffects(scene);
+ const mode=$('#weather-preview').value,p=weatherEffects.update(state.time,config.environment,mode,$('#weather-flashes').checked&&state.running);
+ const labels={auto:'관측·설정 날씨',clear:'맑음',cloud:'흐림',rain:'비',snow:'눈',fog:'안개',thunder:'뇌우',typhoon:'태풍'};
+ $('#weather-effect-status').textContent=mode==='auto'?`날씨 연출: ${labels[p.mode]??p.mode}${p.wind>=25?' · 강풍':''}`:`${labels[mode]} 시각 시연 · 실제 관측·물리 조건 유지`;
+}
+function applyOceanPose(m=metrics()){
+ if(!ship)return;const pose=hullPose(state.time,config.environment??config.wave);
+ ship.position.y=pose.heave;ship.rotation.x=THREE.MathUtils.degToRad((m.heel??0)*8)+pose.roll;
+ ship.rotation.z=-Math.atan(m.trim/180)*8+pose.pitch;
+}
+function updateModel(){if(!ship)return;const m=metrics();applyOceanPose(m);const interior=['tank','facility','lower'].includes(state.deck);ship.children.forEach(o=>{if(o.geometry?.type==='ExtrudeGeometry'){o.material.transparent=interior||state.exploded;o.material.opacity=interior?.14:state.exploded?.32:1;o.material.depthWrite=!interior}});containerMeshes.forEach((mesh,i)=>{const c=cargo[i];mesh.visible=!state.removed.includes(c.id)&&(state.deck==='all'||state.deck==='upper'&&c.tier>0||state.deck==='lower'&&c.tier===0);mesh.position.y=9.1+c.tier*4.8+(state.exploded?c.tier*11+14:0)});tankMeshes.forEach((mesh,i)=>{mesh.visible=state.deck==='all'||state.deck==='tank'||state.exploded;if(i%2===0){const index=i/2;const fill=state.tanks[index]/MODEL.tankCapacity;mesh.scale.y=7*fill/4;mesh.position.y=-4+7*fill/2}});facilityMeshes.forEach(mesh=>{mesh.visible=state.deck==='all'||state.deck==='facility'||state.exploded});}
 function setView(view){state.view=view;$('#scene').hidden=view!=='3d';$('#plan').hidden=view!=='2d';$('#view3d').classList.toggle('active',view==='3d');$('#view2d').classList.toggle('active',view==='2d');$('#viewTag').textContent=view==='3d'?'3D 전체 보기':'2D 도면 보기';$('#viewHint').textContent=view==='3d'?'드래그하여 회전 · 스크롤하여 확대 · 구역 클릭':'구역을 클릭해 화물 무게와 탱크의 물 양 확인';$('.compass').hidden=view==='2d';$('.view-controls').hidden=view==='2d';if(view==='2d')drawPlan();}
 function setDeck(deck){state.deck=deck;$$('[data-deck]').forEach(b=>b.classList.toggle('active',b.dataset.deck===deck));$('#selectionInfo').textContent={all:'전체 선박 · 화물 및 탱크',upper:'상부 갑판 · TIER 02–03',lower:'하부 화물창 · TIER 01',tank:'밸러스트 · 4개 탱크 / 각 1,200 t',facility:'기관·시설 · 펌프 / BWTS / 선교'}[deck];updateModel();if(state.view==='2d')drawPlan();}
 function selectObject(data){state.selected=data;if(data.kind==='cargo'){const c=cargo.find(c=>c.id===data.id);setDeck(data.deck);setView('2d');toast(`${c.id} · BAY ${c.bay+1} · ${c.weight} t · TIER ${c.tier+1}`)}else if(data.kind==='tank'){setDeck('tank');setView('2d');tankModal(data.index)}else{setDeck(data.deck);setView('2d');if(data.kind==='facility')facilityModal(data.name)}update();}
@@ -112,11 +224,11 @@ else{const rooms=[{x:145,y:76,w:170,h:145,name:'기관실',sub:'ENGINE ROOM'},{x
 function tankModal(index){modal(`<h2>${tanks[index].name}</h2><p>선박의 균형을 조절하는 평형수가 담긴 공간입니다.</p><table><tr><td>현재 평형수</td><td>${state.tanks[index].toFixed(0)} t</td></tr><tr><td>탱크 용량</td><td>1,200 t</td></tr><tr><td>채워진 비율</td><td>${(state.tanks[index]/1200*100).toFixed(0)}%</td></tr></table><p>시뮬레이션을 재생하고 추천안을 적용하면 탱크 사이로 물이 이동합니다.</p>`)}
 function facilityModal(name){modal(`<h2>${name}</h2><p>선박 내부 시설을 탐색하는 시연용 도면입니다. 실제 배관 및 시설 설계를 재현하지 않습니다.</p><table><tr><td>밸러스트 펌프</td><td>정상 2.5 t/s · 성능 저하 0.35 t/s</td></tr><tr><td>탱크</td><td>4개 · 각 1,200 t</td></tr><tr><td>BWTS</td><td>평형수 처리 시설 위치 표시</td></tr><tr><td>운전 제약</td><td>탱크별 80–1,120 t 내 이송</td></tr></table><p>이 버전은 탱크 간 이송만 계산합니다. 해수 유입·배출 및 BWTS 처리 과정의 시간·수질·전력 모델은 아직 포함하지 않습니다.</p>`)}
 function modal(html){const wasRunning=state.running;state.running=false;$('#modalContent').innerHTML=html;if(!$('#modal').open)$('#modal').showModal();update();if(wasRunning)toast('상세 정보를 보는 동안 시뮬레이션을 일시정지했습니다.');}
-function modelInfo(){modal(`<h2>계산 기준과 구현 범위</h2><p>합성 화물과 가상 탱크를 사용하는 개념 검증용 시뮬레이션입니다. 실제 선박 설계·운전 자료가 아닙니다.</p><h3>적재 높이와 수위 반영</h3><p>고정 선체 12,000 t, 선체 무게중심 높이 6.5 m, 초기 평형수 2,400 t를 가정합니다. 화물 높이는 기준면 위 13.1 + TIER 인덱스 × 4.8 m입니다. KG는 선체·남은 화물·탱크 물의 수직 모멘트 합을 총중량으로 나눕니다.</p><p>GM = 고정 KM − KG − 자유표면 보정. KM은 처음의 GM이 2.4 m가 되도록 보정한 가정값입니다. 직사각형 탱크 길이 28 m·폭 6 m, 물 밀도 1.025 t/m³, 용량 1,200 t로 자유표면 보정과 물의 무게중심을 근사합니다. 실제 선형에 따른 KM 변화와 GZ 곡선을 재현하지 않습니다.</p><p>좌우 기울기 = atan(횡방향 모멘트 / (총중량 × 추정 GM)). GM이 0.2 m 이하이면 이 모델의 계산 범위를 벗어난 것으로 보고 이송을 중지합니다. 이 수치는 시연용 제한이며 법정 기준이 아닙니다. 트림은 별도의 단순 모멘트 지표이고 최적화 대상이 아닙니다.</p><h3>추천·완료·그래프</h3><p>0.12° 이상이면 수위 80~1,120 t 범위 안에서 가능한 반대편 탱크 조합을 모두 비교합니다. 승인 시 다시 계산하며, 하중이 바뀌어 이송 방향이 부적절해지면 재평가합니다. 하역 100%와 이송 완료를 구분하고, 그래프는 가상 시간 기준으로 이송과 최종 상태까지 기록합니다.</p><h3>시연 범위</h3><p>1.5°는 기울기 표시용 기준입니다. ‘시연 기준 내’는 선박 전체의 안전을 보장하지 않습니다. 3D 자세는 8배 확대하며 선박과 탱크 형상은 모식도입니다. BWTS·센서·실제 펌프 제어, 완전한 복원성 및 구조 강도 검증, 체류 시간·비용·전력 절감 평가는 포함하지 않습니다. 현재 추천은 규칙 기반입니다.</p><p>참고: <a href="https://assets.publishing.service.gov.uk/media/5d2c4bea40f0b64a790de8f9/Tanker_Damage_Stability_MGN_post_consultation_version_260619.pdf" target="_blank" rel="noopener">MCA의 GM·자유표면 보정 정의</a>. 일반 원리를 참고했으며 현재 가정 모델이 승인·인증되었다는 뜻은 아닙니다.</p>`)}
+function modelInfo(){modal(`<h2>계산 기준과 구현 범위</h2><p>합성 화물과 가상 탱크를 사용하는 개념 검증용 시뮬레이션입니다. 실제 선박 설계·운전 자료가 아닙니다.</p><h3>적재 높이와 수위 반영</h3><p>고정 선체 12,000 t, 선체 무게중심 높이 6.5 m, 초기 평형수 2,400 t를 가정합니다. 화물 높이는 기준면 위 13.1 + TIER 인덱스 × 4.8 m입니다. KG는 선체·남은 화물·탱크 물의 수직 모멘트 합을 총중량으로 나눕니다.</p><p>GM = 고정 KM − KG − 자유표면 보정. KM은 처음의 GM이 2.4 m가 되도록 보정한 가정값입니다. 직사각형 탱크 길이 28 m·폭 6 m, 물 밀도 1.025 t/m³, 용량 1,200 t로 자유표면 보정과 물의 무게중심을 근사합니다. 실제 선형에 따른 KM 변화와 GZ 곡선을 재현하지 않습니다.</p><p>좌우 기울기 = atan(횡방향 모멘트 / (총중량 × 추정 GM)). GM이 0.2 m 이하이면 이 모델의 계산 범위를 벗어난 것으로 보고 이송을 중지합니다. 이 수치는 시연용 제한이며 법정 기준이 아닙니다. 트림은 별도의 단순 모멘트 지표이고 최적화 대상이 아닙니다.</p><h3>추천·완료·그래프</h3><p>0.12° 이상이면 수위 80~1,120 t 범위 안에서 가능한 반대편 탱크 조합을 모두 비교합니다. 승인 시 다시 계산하며, 하중이 바뀌어 이송 방향이 부적절해지면 재평가합니다. 하역 100%와 이송 완료를 구분하고, 그래프는 가상 시간 기준으로 이송과 최종 상태까지 기록합니다.</p><h3>가상 파도</h3><p>순간 기울기 = 하역·평형수 기울기 + 합성 파도 성분. 파도는 8초·13초 사인파의 가중합이며 진폭 상한은 잔잔함 0.25°, 보통 0.75°입니다. 위상과 가상 시간을 동일하게 사용합니다. 추천에는 알려진 하역 성분만 전달하며 실측 신호 분리나 AI 추정은 아닙니다. 선박의 관성·감쇠·공진·파고 응답은 계산하지 않습니다.</p><h3>시연 범위</h3><p>1.5°는 기울기 표시용 기준입니다. ‘시연 기준 내’는 선박 전체의 안전을 보장하지 않습니다. 3D는 하역 기울기를 8배 확대하고 수면 높이로 시각적 상하·좌우·앞뒤 움직임을 더합니다. 화면의 순간 기울기 지표는 별도의 합성 외란 모델이며 3D 자세와 같지 않습니다. 선박과 탱크 형상은 모식도입니다. BWTS·센서·실제 펌프 제어, 완전한 복원성 및 구조 강도 검증, 체류 시간·비용·전력 절감 평가는 포함하지 않습니다. 현재 추천은 물리 모델의 60초 예측과 후보 탐색 또는 현재 상태 기반 규칙을 선택합니다. 학습형 AI는 미구현입니다. 초기 수위와 유량·하역 간격은 입력 설정을 따릅니다.</p><p>참고: <a href="https://assets.publishing.service.gov.uk/media/5d2c4bea40f0b64a790de8f9/Tanker_Damage_Stability_MGN_post_consultation_version_260619.pdf" target="_blank" rel="noopener">MCA의 GM·자유표면 보정 정의</a>. 일반 원리를 참고했으며 현재 가정 모델이 승인·인증되었다는 뜻은 아닙니다.</p>`)}
 let toastTimer;function toast(text){$('#toast').textContent=text;$('#toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),3500)}
 $('#play').onclick=()=>{if(state.running){state.running=false;event('일시정지');}else{if(complete())reset();if(!metrics().valid){toast('모델 계산 범위를 확인하세요.');return;}state.running=true;event('시뮬레이션 재생');}update()};
 $('#reset').onclick=()=>{reset();toast('처음 상태로 되돌렸습니다.')};
-$('#scenario').onchange=e=>{state.scenario=e.target.value;$('#scenarioDesc').textContent=state.scenario==='port'?'왼쪽 화물을 먼저 내립니다. 기울기를 관찰한 뒤 조정안을 적용해 보세요.':'양쪽 화물을 번갈아 내립니다. 균형을 유지하는 하역 방식과 비교해 보세요.';reset()};
+$('#scenario').onchange=e=>{if(customOrder){$('#inputMessage').textContent='CSV 지정 순서가 적용 중입니다. 예제 복원 후 시나리오를 변경하세요.';return;}invalidateComparison();state.scenario=e.target.value;$('#scenarioDesc').textContent=state.scenario==='port'?'왼쪽 화물을 먼저 내립니다. 기울기를 관찰한 뒤 조정안을 적용해 보세요.':'양쪽 화물을 번갈아 내립니다. 균형을 유지하는 하역 방식과 비교해 보세요.';reset()};
 $('#approve').onclick=()=>approve();
 $('#auto').onchange=()=>{if($('#auto').checked&&recommendation)approve()};
 $('#view3d').onclick=()=>setView('3d');$('#view2d').onclick=()=>setView('2d');
@@ -126,10 +238,10 @@ $('#resetCamera').onclick=()=>{yaw=.72;pitch=.48;distance=170};
 $('#zoomIn').onclick=()=>distance=Math.max(90,distance-18);$('#zoomOut').onclick=()=>distance=Math.min(300,distance+18);
 $('#closeModal').onclick=()=>$('#modal').close();$('#modal').onclick=e=>{if(e.target===$('#modal')){const r=$('#modal').getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)$('#modal').close()}};
 $('#modelInfo').onclick=modelInfo;
-let previous=performance.now(),updateAccum=0;function frame(now){const dt=Math.min((now-previous)/1000,.1);previous=now;updateAccum+=dt;if(updateAccum>.15){advance(updateAccum);updateAccum=0}if(renderer&&state.view==='3d'){camera.position.set(Math.cos(yaw)*Math.cos(pitch)*distance,Math.sin(pitch)*distance,Math.sin(yaw)*Math.cos(pitch)*distance);camera.lookAt(0,5,0);renderer.render(scene,camera)}requestAnimationFrame(frame)}reset();if(!webgl)setView('2d');requestAnimationFrame(frame);
+let previous=performance.now(),updateAccum=0;function frame(now){const dt=Math.min((now-previous)/1000,.1);previous=now;updateAccum+=dt;if(updateAccum>(!config.environment&&config.wave==='off'?.15:.025)){advance(updateAccum);updateAccum=0}if(renderer&&state.view==='3d'){ocean?.update(state.time,config.environment??config.wave);applyWeather();applyOceanPose();if(grid)grid.visible=!config.environment&&config.wave==='off';oceanDecor.forEach(o=>o.visible=!config.environment&&config.wave==='off');camera.position.set(Math.cos(yaw)*Math.cos(pitch)*distance,Math.sin(pitch)*distance,Math.sin(yaw)*Math.cos(pitch)*distance);camera.lookAt(0,5,0);renderer.render(scene,camera)}requestAnimationFrame(frame)}initDecisionUI();initEnvironment({apply:environment=>{if(environment?.observation&&!environment.selectedObservations&&config.environment?.weatherData&&environment.weather===config.environment.weather){environment.weatherData=config.environment.weatherData;environment.weatherSource=config.environment.weatherSource;environment.isDay=config.environment.isDay;environment.source='기상청 실제 관측 / 날씨 모델 예보';}config.environment=environment;invalidateComparison();reset();}});reset();if(!webgl)setView('2d');requestAnimationFrame(frame);
 // Read-only snapshot for QA and external prototype inspection.
-window.harborTwin={snapshot:()=>({phase:complete()?'complete':state.transfer?'transfer':recommendation?'approval':'unloading',notice:state.notice,applied:state.applied,transferred:state.transferred,running:state.running,time:state.time,removed:state.removed.length,tanks:[...state.tanks],metrics:metrics(),baseline:metrics(false),recommendation,transfer:state.transfer,history:[...state.history],view:state.view,deck:state.deck})};
-import { initTutorial } from './tutorial.js';
+window.harborTwin={snapshot:()=>({phase:complete()?'complete':state.transfer?'transfer':recommendation?'approval':'unloading',notice:state.notice,applied:state.applied,transferred:state.transferred,running:state.running,time:state.time,removed:state.removed.length,tanks:[...state.tanks],metrics:metrics(),baseline:metrics(false),config:{...config},wave:Decision.waveAt(state.time,config.wave,config.environment),instantHeel:Decision.observedHeel(metrics().heel,state.time,config.wave,config.environment),strategy,events:[...state.events],recommendation,transfer:state.transfer,history:[...state.history],view:state.view,deck:state.deck})};
+import { initTutorial } from './tutorial.js?v=20';
 initTutorial({
   pause:()=>{state.running=false;update();},
   captureView:()=>({view:state.view,deck:state.deck}),

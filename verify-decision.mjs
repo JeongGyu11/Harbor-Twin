@@ -1,0 +1,21 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';import vm from 'node:vm';
+import * as Decision from './dist/decision.mjs';
+const cargo=[];for(let tier=0;tier<3;tier++)for(let bay=0;bay<6;bay++)for(let row=0;row<4;row++)cargo.push({id:`C${String(cargo.length+1).padStart(3,'0')}`,tier,bay,row,x:-32+bay*13,z:-7.5+row*5,weight:22+((bay*7+row*3+tier*5)%13)});
+const model=Decision.makeModel(cargo),cfg={...Decision.DEFAULTS,levels:[600,600,600,600]};
+const queue=cargo.slice().sort((a,b)=>a.z-b.z||b.tier-a.tier||a.bay-b.bay).map(c=>c.id);
+let count=0;function test(name,fn){fn();console.log('PASS',name);count++;}
+test('look-ahead anticipates unloading before reactive threshold',()=>{const s={levels:cfg.levels,removed:[],queue,acc:0};assert.equal(Decision.choose(model,s,cfg,'rule').action,null);const d=Decision.choose(model,s,cfg);assert.ok(d.action);assert.ok(d.selected.result.peak<d.hold.peak);assert.equal(d.hold.points.length,31);});
+const results=[];
+for(const scenario of ['port','balanced'])for(const setup of [cfg,{...cfg,rate:.35,interval:10,levels:[500,700,550,650]}])for(const mode of ['none','rule','predictive'])test(`${scenario} ${mode} rate=${setup.rate} conserves water and completes`,()=>{const q=scenario==='port'?queue:cargo.slice().sort((a,b)=>b.tier-a.tier||a.bay-b.bay||Math.abs(a.z)-Math.abs(b.z)||a.z-b.z).map(c=>c.id);const r=Decision.runComparison(model,q,setup,mode);assert.ok(r.complete);assert.equal(r.violations,0);assert.ok(Math.abs(r.levels.reduce((a,b)=>a+b,0)-setup.levels.reduce((a,b)=>a+b,0))<1e-6);assert.ok(Number.isFinite(r.peak));assert.ok(r.pumpSeconds<=r.time);if(scenario==='port'&&setup===cfg)results.push(r);});
+test('same inputs reproduce identical experimental results',()=>{assert.deepEqual(Decision.runComparison(model,queue,cfg,'rule'),results.find(r=>r.mode==='rule'));});
+test('candidate cannot transfer out of empty donor or into full receiver',()=>{const s={levels:[80,1120,80,1120],removed:queue.slice(0,12),queue,acc:0};const d=Decision.choose(model,s,cfg);for(const c of d.candidates)if(c.action){assert.ok(c.action.amount<=s.levels[c.action.from]-80+1e-7);assert.ok(c.action.amount<=1120-s.levels[c.action.to]+1e-7);}});
+const full=fs.readFileSync('dist/app.js','utf8');const core=full.split('// Shared vessel coordinates')[0].replace(/import [^\n]+\n/g,'');const ids=[...fs.readFileSync('dist/index.html','utf8').matchAll(/id="([^"]+)"/g)].map(m=>m[1]);
+const nodes=Object.fromEntries(ids.map(id=>[id,{textContent:'',innerHTML:'',checked:false,disabled:false,value:'port',style:{},classList:{toggle(){},add(){},remove(){}}}]));
+const ctx=vm.createContext({Decision,document:{querySelector:s=>nodes[s.slice(1)]??null,querySelectorAll:()=>[]},updateModel(){},drawPlan(){},toast(){}});vm.runInContext(core,ctx);vm.runInContext('renderDecision=()=>{};reset()',ctx);
+const run=s=>vm.runInContext(s,ctx);
+const csv='id,weight,order\n'+queue.map((id,i)=>`${id},${cargo.find(c=>c.id===id).weight},${i+1}`).join('\n');ctx.csv=csv;
+test('CSV accepts full valid plan and rejects incomplete, duplicate and lower-first plans',()=>{assert.equal(run('parseCargoCSV(csv).length'),72);for(const bad of [csv.split('\n').slice(0,-1).join('\n'),csv.replace('C025','C001'),'id,weight,order\n'+cargo.map((c,i)=>`${c.id},${c.weight},${i+1}`).join('\n')]){ctx.bad=bad;assert.throws(()=>run('parseCargoCSV(bad)'));}});
+test('UI and experiment hydrostatics agree',()=>{const m=run('metrics()');const d=Decision.measure(model,[],cfg.levels);assert.ok(Math.abs(m.heel-d.heel)<1e-12);assert.ok(Math.abs(m.gm-d.gm)<1e-12);});
+test('predictive live simulation completes without loss and paused approval does not move water',()=>{nodes.auto.checked=true;run('state.running=true;advance(1);state.running=false');const before=run('JSON.stringify(state.tanks)');run('advance(10)');assert.equal(run('JSON.stringify(state.tanks)'),before);run('state.running=true');for(let i=0;i<4000&&run('state.running');i++)run('advance(.1)');assert.equal(run('state.removed.length'),72);assert.equal(run('state.running'),false);assert.ok(Math.abs(run('state.tanks.reduce((a,b)=>a+b,0)')-2400)<1e-6);assert.ok(run('state.tanks.every(v=>v>=80&&v<=1120)'));});
+console.log(JSON.stringify({checks:count,defaultPortResults:results.map(({points,...r})=>r)},null,2));
