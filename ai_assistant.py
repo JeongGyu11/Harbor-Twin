@@ -309,4 +309,5 @@ def complete(body):
     if busy_wait:
         secs = max(3, min(60, round(min(busy_wait))))
         return 429, {'error': f'지금 AI 사용이 몰려 잠시 쉬고 있어요. {secs}초 뒤 자동으로 다시 시도할게요.', 'retryAfter': secs}
-    return 502, {'error': '사용 가능한 AI 모델을 찾지 못했습니다.', 'detail': str(last_error)[:300]}
+    print(f'[ai] all providers failed: {skipped}', flush=True)
+    return 502, {'error': '사용 가능한 AI 모델을 찾지 못했습니다.', 'detail': str(last_error)[:300], 'attempts': [f'{m}:{c}' for m, c in skipped]}
