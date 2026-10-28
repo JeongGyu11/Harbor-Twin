@@ -290,7 +290,7 @@ function aiContext(){
  const r=recommendation,tr=state.transfer;
  return {
   signConvention:'기울기 음수=좌현, 양수=우현',heelDeg:r2(m.heel),instantHeelWithWavesDeg:r2(instant),gmM:r2(m.gm),thresholdDeg:config.threshold,unloadIntervalS:config.interval,pumpRateTps:config.rate,
-  unloading:{done:state.removed.length-initialRemoved.length,total:initialCount(),running:state.running,elapsed:fmtTime(state.time-initialTime)},
+  unloading:{containersUnloaded:state.removed.length-initialRemoved.length,containersTotal:initialCount(),unit:'컨테이너 개수(톤 아님)',running:state.running,elapsed:fmtTime(state.time-initialTime)},
   tanks:tanks.map((t,i)=>({id:t.id,name:t.name,tonnes:Math.round(state.tanks[i]),capacity:1200,operatingRange:'80-1120'})),
   nextUnload:next,
   recommendation:r?{from:tanks[r.from].id,to:tanks[r.to].id,amountT:Math.round(r.amount),predictedHeelDeg:r2(r.predicted),durationS:Math.ceil(r.duration),basis:r.settling?'하역 후 잔여 기울기 보정':r.predictive?'60초 예측 후보 비교':'현재 상태 규칙'}:null,
