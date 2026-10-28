@@ -8,11 +8,18 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const fmt=s=>esc(plainText(s)).replace(/\n/g,'<br>');
 const twin=()=>window.harborTwin;
 
-let status={configured:null};
-async function ask(role,extra={}){
+let status={configured:null},coolUntil=0;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+export const aiCoolingDown=()=>Date.now()<coolUntil;
+// One automatic retry when Groq's per-minute token limit is hit; onWait shows the countdown.
+async function ask(role,extra={},{onWait}={},retried=false){
  const context=twin()?.aiContext?.()??{};
  const r=await fetch(API+'/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role,context,...extra})});
  let data={};try{data=await r.json();}catch{}
+ if(r.status===429){
+  const secs=Math.max(3,Math.min(60,Number(data.retryAfter)||10));coolUntil=Date.now()+secs*1000;
+  if(!retried&&secs<=30){for(let left=secs;left>0;left--){onWait?.(left);await sleep(1000);}return ask(role,extra,{onWait},true);}
+ }
  if(!r.ok)throw Error(data.error||`AI 요청 실패 (${r.status})`);
  return data;
 }
@@ -40,13 +47,13 @@ function initBriefing(){
  let busy=false,lastKey='',lastAt=0;
  const run=async(manual=false)=>{
   if(busy)return;busy=true;btn.disabled=true;btn.textContent='작성 중…';body.innerHTML='<p class="ai-loading"><span></span><span></span><span></span> AI가 현재 상황을 정리하고 있어요</p>';
-  try{const d=await ask('briefing');body.innerHTML=`<p>${fmt(d.content||'응답이 비어 있습니다.')}</p>`;lastAt=Date.now();}
+  try{const d=await ask('briefing',{},{onWait:s=>{body.innerHTML=`<p class="ai-muted">AI 사용이 몰려 잠시 쉬고 있어요. ${s}초 뒤 다시 시도할게요…</p>`;}});body.innerHTML=`<p>${fmt(d.content||'응답이 비어 있습니다.')}</p>`;lastAt=Date.now();}
   catch(e){body.innerHTML=`<p class="ai-error">${esc(e.message)}</p>`;}
   finally{busy=false;btn.disabled=false;btn.textContent='다시 브리핑';}
  };
  btn.onclick=()=>run(true);
  setInterval(()=>{
-  if(!status.configured||busy||!card.offsetParent)return; // only while the panel is visible
+  if(!status.configured||busy||!card.offsetParent||aiCoolingDown())return; // only while the panel is visible
   const s=twin()?.aiContext?.();if(!s)return;const r=s.recommendation,t=s.transferInProgress;
   const key=r?`${r.from}>${r.to}:${Math.round(r.amountT/20)}`:t?`T${t.from}>${t.to}`:'none';
   if(key!==lastKey&&Date.now()-lastAt>20000&&(r||t||lastKey)){lastKey=key;run();}
@@ -63,7 +70,7 @@ function initRiskGuide(){
  let busy=false,lastSig='',lastAt=0;
  const run=async()=>{
   if(busy)return;busy=true;btn.disabled=true;body.innerHTML='<p class="ai-loading"><span></span><span></span><span></span> 원인과 조치를 정리하고 있어요</p>';
-  try{const d=await ask('risk');body.innerHTML=`<p>${fmt(d.content)}</p>`;lastAt=Date.now();}
+  try{const d=await ask('risk',{},{onWait:s=>{body.innerHTML=`<p class="ai-muted">AI 사용이 몰려 잠시 쉬고 있어요. ${s}초 뒤 다시 안내할게요…</p>`;}});body.innerHTML=`<p>${fmt(d.content)}</p>`;lastAt=Date.now();}
   catch(e){body.innerHTML=`<p class="ai-error">${esc(e.message)}</p>`;}
   finally{busy=false;btn.disabled=false;}
  };
@@ -74,7 +81,7 @@ function initRiskGuide(){
   card.hidden=false;card.dataset.level=String(sev);
   if(!status.configured){if(!busy)body.innerHTML='<p class="ai-muted">AI 키가 설정되면 원인과 즉시 조치를 안내합니다.</p>';return;}
   const sig=`${sev}|${s.risk.reasons.map(r=>r.slice(0,12)).sort().join(',')}`;
-  if(sig!==lastSig&&Date.now()-lastAt>15000){lastSig=sig;run();}
+  if(sig!==lastSig&&Date.now()-lastAt>15000&&!aiCoolingDown()){lastSig=sig;run();}
  },1500);
 }
 
@@ -104,7 +111,7 @@ function initChat(){
   const wait=add('bot','<span class="ai-loading"><span></span><span></span><span></span></span>','pending');
   try{
    for(let round=0;round<3;round++){
-    const d=await ask('chat',{messages:history});
+    const d=await ask('chat',{messages:history},{onWait:s=>{if(mine===session)wait.innerHTML=`<span class="hc-tool">⏳ AI 사용이 몰려 잠시 쉬고 있어요. ${s}초 뒤 자동으로 이어서 답할게요…</span>`;}});
     if(mine!==session)return;
     if(d.tool_calls?.length){
      history.push({role:'assistant',content:d.content||'',tool_calls:d.tool_calls});

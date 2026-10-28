@@ -117,6 +117,18 @@ class RateLimiter:
 
 limiter = RateLimiter()
 
+def _retry_after(err, detail):
+    try:
+        header = float(err.headers.get('retry-after') or 0)
+    except (TypeError, ValueError):
+        header = 0
+    import re
+    m = re.search(r'try again in ([0-9.]+)\s*(ms|s|m)', detail)
+    if m:
+        value = float(m.group(1)) * {'ms': 0.001, 's': 1, 'm': 60}[m.group(2)]
+        return max(header, value)
+    return header or 6
+
 def status():
     key, name = api_key()
     return {'configured': bool(key), 'keyName': name, 'models': list(models()), 'roles': list(PROMPTS)}
@@ -149,7 +161,7 @@ def complete(body):
     role = body.get('role')
     if role not in PROMPTS:
         return 400, {'error': '지원하지 않는 AI 역할입니다.'}
-    context = json.dumps(body.get('context') or {}, ensure_ascii=False)[:9000]
+    context = json.dumps(body.get('context') or {}, ensure_ascii=False, separators=(',', ':'))[:9000]
     messages = [{'role': 'system', 'content': PROMPTS[role] + '\n\n현재 시뮬레이션 상태 JSON:\n' + context}]
     if role == 'chat':
         messages += _clean_messages(body.get('messages'))
@@ -163,39 +175,50 @@ def complete(body):
         payload['tool_choice'] = 'auto'
     last_error = None
     skipped = []
+    busy_wait = []
     for model in models():
         body_out = {**payload, 'model': model}
         if model.startswith('openai/gpt-oss'):
             body_out['reasoning_effort'] = 'low'
-            body_out['max_tokens'] = payload['max_tokens'] + 900
-        req = urllib.request.Request(GROQ_URL, data=json.dumps(body_out).encode(),
-                                     headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json',
-                                              'User-Agent': 'harbor-twin/1.0'}, method='POST')
-        try:
-            with urllib.request.urlopen(req, timeout=40) as r:
-                data = json.loads(r.read(400_000))
-            choice = (data.get('choices') or [{}])[0].get('message', {})
-            calls = [{'id': c.get('id'), 'type': 'function', 'function': {'name': c['function']['name'], 'arguments': c['function'].get('arguments') or '{}'}}
-                     for c in (choice.get('tool_calls') or []) if c.get('function', {}).get('name') == 'simulate_what_if']
-            content = (choice.get('content') or '').strip()
-            if not content and not calls:
-                skipped.append((model, 'empty'))
-                print(f'[ai] empty answer from {model}: finish={((data.get("choices") or [{}])[0]).get("finish_reason")}', flush=True)
-                continue
-            return 200, {'content': content, 'tool_calls': calls, 'model': model, 'skipped': [m for m, _ in skipped]}
-        except urllib.error.HTTPError as e:
-            detail = e.read(2000).decode('utf-8', 'replace')
-            last_error = (e.code, detail)
-            print(f'[ai] {model} HTTP {e.code}: {detail[:400]}', flush=True)
-            if e.code in (400, 403, 404) and ('model' in detail.lower() or 'decommission' in detail.lower()):
-                skipped.append((model, e.code))
-                continue  # model unavailable: try the next one
-            if e.code == 401:
-                return 502, {'error': 'AI 키가 올바르지 않습니다. Render 환경변수를 확인하세요.'}
-            if e.code == 429:
-                return 429, {'error': 'AI 사용량 한도에 잠시 도달했습니다. 잠시 후 다시 시도하세요.'}
-            return 502, {'error': f'AI 응답 오류({e.code})'}
-        except Exception as e:  # network/timeout
-            last_error = (0, str(e))
-            return 504, {'error': 'AI 서버에 연결하지 못했습니다. 잠시 후 다시 시도하세요.'}
+            body_out['max_tokens'] = payload['max_tokens'] + 300  # room for short reasoning, kept small: Groq counts it toward TPM
+        for attempt in (1, 2):
+            req = urllib.request.Request(GROQ_URL, data=json.dumps(body_out, ensure_ascii=False, separators=(',', ':')).encode(),
+                                         headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json',
+                                                  'User-Agent': 'harbor-twin/1.0'}, method='POST')
+            try:
+                with urllib.request.urlopen(req, timeout=40) as r:
+                    data = json.loads(r.read(400_000))
+                choice = (data.get('choices') or [{}])[0].get('message', {})
+                calls = [{'id': c.get('id'), 'type': 'function', 'function': {'name': c['function']['name'], 'arguments': c['function'].get('arguments') or '{}'}}
+                         for c in (choice.get('tool_calls') or []) if c.get('function', {}).get('name') == 'simulate_what_if']
+                content = (choice.get('content') or '').strip()
+                if not content and not calls:
+                    skipped.append((model, 'empty'))
+                    print(f'[ai] empty answer from {model}: finish={((data.get("choices") or [{}])[0]).get("finish_reason")}', flush=True)
+                    break
+                return 200, {'content': content, 'tool_calls': calls, 'model': model, 'skipped': [m for m, _ in skipped]}
+            except urllib.error.HTTPError as e:
+                detail = e.read(2000).decode('utf-8', 'replace')
+                last_error = (e.code, detail)
+                print(f'[ai] {model} HTTP {e.code} (attempt {attempt}): {detail[:300]}', flush=True)
+                if e.code in (400, 403, 404) and ('model' in detail.lower() or 'decommission' in detail.lower()):
+                    skipped.append((model, e.code))
+                    break  # model unavailable: try the next one
+                if e.code == 401:
+                    return 502, {'error': 'AI 키가 올바르지 않습니다. Render 환경변수를 확인하세요.'}
+                if e.code == 429:
+                    wait = _retry_after(e, detail)
+                    busy_wait.append(wait)
+                    if attempt == 1 and wait <= 8:
+                        time.sleep(wait + 0.3)  # per-minute limit frees up within seconds
+                        continue
+                    skipped.append((model, 429))
+                    break  # each model has its own limit: try the next one
+                return 502, {'error': f'AI 응답 오류({e.code})'}
+            except Exception as e:  # network/timeout
+                last_error = (0, str(e))
+                return 504, {'error': 'AI 서버에 연결하지 못했습니다. 잠시 후 다시 시도하세요.'}
+    if busy_wait:
+        secs = max(3, min(60, round(min(busy_wait))))
+        return 429, {'error': f'지금 AI 사용이 몰려 잠시 쉬고 있어요. {secs}초 뒤 자동으로 다시 시도할게요.', 'retryAfter': secs}
     return 502, {'error': '사용 가능한 AI 모델을 찾지 못했습니다.', 'detail': str(last_error)[:300]}
