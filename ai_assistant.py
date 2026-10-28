@@ -154,8 +154,13 @@ def complete(body):
         payload['tools'] = TOOLS
         payload['tool_choice'] = 'auto'
     last_error = None
+    skipped = []
     for model in models():
-        req = urllib.request.Request(GROQ_URL, data=json.dumps({**payload, 'model': model}).encode(),
+        body_out = {**payload, 'model': model}
+        if model.startswith('openai/gpt-oss'):
+            body_out['reasoning_effort'] = 'low'
+            body_out['max_tokens'] = payload['max_tokens'] + 900
+        req = urllib.request.Request(GROQ_URL, data=json.dumps(body_out).encode(),
                                      headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json',
                                               'User-Agent': 'harbor-twin/1.0'}, method='POST')
         try:
@@ -164,11 +169,18 @@ def complete(body):
             choice = (data.get('choices') or [{}])[0].get('message', {})
             calls = [{'id': c.get('id'), 'type': 'function', 'function': {'name': c['function']['name'], 'arguments': c['function'].get('arguments') or '{}'}}
                      for c in (choice.get('tool_calls') or []) if c.get('function', {}).get('name') == 'simulate_what_if']
-            return 200, {'content': (choice.get('content') or '').strip(), 'tool_calls': calls, 'model': model}
+            content = (choice.get('content') or '').strip()
+            if not content and not calls:
+                skipped.append((model, 'empty'))
+                print(f'[ai] empty answer from {model}: finish={((data.get("choices") or [{}])[0]).get("finish_reason")}', flush=True)
+                continue
+            return 200, {'content': content, 'tool_calls': calls, 'model': model, 'skipped': [m for m, _ in skipped]}
         except urllib.error.HTTPError as e:
             detail = e.read(2000).decode('utf-8', 'replace')
             last_error = (e.code, detail)
-            if e.code in (400, 404) and ('model' in detail.lower() or 'decommission' in detail.lower()):
+            print(f'[ai] {model} HTTP {e.code}: {detail[:400]}', flush=True)
+            if e.code in (400, 403, 404) and ('model' in detail.lower() or 'decommission' in detail.lower()):
+                skipped.append((model, e.code))
                 continue  # model unavailable: try the next one
             if e.code == 401:
                 return 502, {'error': 'AI 키가 올바르지 않습니다. Render 환경변수를 확인하세요.'}
