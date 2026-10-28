@@ -21,6 +21,26 @@ class AI(unittest.TestCase):
  def test_requested_transfer_assessment_wins(self):
   body={'role':'chat','context':{'operationAssessment':{'label':'자료 부족'}},'messages':[{'role':'user','content':'물을 옮기면?'},{'role':'tool','content':json.dumps({'operationAssessment':{'label':'주의'},'evaluatedTransferAssessment':{'label':'중지 검토'}})}]}
   self.assertEqual(a._assessment(body)['label'],'중지 검토')
+ def test_condition_question_requires_tool(self):
+  calls=[]
+  class Response:
+   headers={}
+   def __enter__(self):return self
+   def __exit__(self,*args):pass
+   def read(self,*args):return json.dumps({'choices':[{'message':{'tool_calls':[{'id':'test','function':{'name':'simulate_what_if','arguments':'{"wind_speed":20}'}}]}}]}).encode()
+  def open_request(req,**kw):calls.append(json.loads(req.data));return Response()
+  with patch.object(a,'providers',return_value=[('groq','https://invalid.example','fixture','test')]),patch.object(a.urllib.request,'urlopen',side_effect=open_request):
+   code,r=a._complete_provider({'role':'chat','context':{},'messages':[{'role':'user','content':'풍속 20m/s면 계속해도 돼?'}]},a.time.monotonic()+10)
+   self.assertEqual(code,200);self.assertEqual(calls[0]['tool_choice']['function']['name'],'simulate_what_if');self.assertEqual(json.loads(r['tool_calls'][0]['function']['arguments'])['wind_speed'],20)
+ def test_required_tool_cannot_be_skipped(self):
+  class Response:
+   headers={}
+   def __enter__(self):return self
+   def __exit__(self,*args):pass
+   def read(self,*args):return json.dumps({'choices':[{'message':{'content':'괜찮아요'}}]}).encode()
+  with patch.object(a,'providers',return_value=[('groq','https://invalid.example','fixture','test')]),patch.object(a.urllib.request,'urlopen',return_value=Response()):
+   code,r=a._complete_provider({'role':'chat','messages':[{'role':'user','content':'풍속 20m/s면?'}]},a.time.monotonic()+10)
+   self.assertEqual(code,502)
  def test_provider_exception_json(self):
   with patch.object(a,'_complete_provider',side_effect=TypeError('private internal detail')):
    code,r=a.complete({'role':'weather'});self.assertEqual(code,502);self.assertNotIn('private',str(r))

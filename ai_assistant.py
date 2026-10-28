@@ -297,9 +297,14 @@ def _complete_provider(body, deadline):
     else:
         messages.append({'role': 'user', 'content': '위 상태로 작성해 주세요.'})
     payload = {'messages': messages, 'temperature': 0 if role == 'manifest' else 0.15, 'top_p': 0.9, 'max_tokens': {'chat': 700, 'report': 1000, 'manifest': 2200, 'weather': 520}.get(role, 420)}
+    force_tool = False
     if role == 'chat':
         payload['tools'] = TOOLS
         payload['tool_choice'] = 'auto'
+        raw = body.get('messages') or []
+        latest = raw[-1] if raw else {}
+        force_tool = latest.get('role') == 'user' and bool(re.search(r'풍속|풍향|파고|파주기|파향|하역\s*간격|만약|옮기|이송|다음\s*화물|[PS]-[FA]', latest.get('content', ''), re.I))
+        if force_tool:payload['tool_choice'] = {'type':'function','function':{'name':'simulate_what_if'}}
     last_error = None
     skipped = []
     busy_wait = []
@@ -333,6 +338,9 @@ def _complete_provider(body, deadline):
                 choice = (data.get('choices') or [{}])[0].get('message', {})
                 calls = [{'id': c.get('id'), 'type': 'function', 'function': {'name': c['function']['name'], 'arguments': c['function'].get('arguments') or '{}'}}
                          for c in (choice.get('tool_calls') or []) if c.get('function', {}).get('name') == 'simulate_what_if']
+                if force_tool and not calls:
+                    skipped.append((model, 'required-tool-missing'))
+                    break
                 content = (choice.get('content') or '').strip()
                 if not content and not calls:
                     skipped.append((model, 'empty'))
@@ -383,6 +391,7 @@ def _complete_provider(body, deadline):
 # Facts are rendered directly from the model in the browser; unsafe prose is replaced.
 OUTPUT_POLICY = """
 최종 출력 제한(앞의 형식 요청보다 우선):
+- simulate_what_if 도구의 인자에는 사용자 질문의 수치를 정확히 전달하세요. 아래 문장 제한은 도구 인자에는 적용하지 않습니다.
 - 설명에는 숫자, 숫자로 된 번호 목록, 시간, 수치 단위, 탱크 영문 ID를 쓰지 마세요. 수치는 화면의 원본 표가 담당합니다.
 - 숫자가 필요한 부분은 '기록 표의 값', '현재 시연 한도', '추천 탱크'로 표현하세요. 목록은 • 기호를 사용하세요.
 - '안전합니다', '괜찮아요', '계속 진행해도 됩니다', '안전 기준 만족' 같은 보증·운전 허가 표현을 쓰지 마세요.
