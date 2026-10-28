@@ -1,7 +1,8 @@
+import {MAX_WIND} from './wind-model.mjs?v=windbands1';
 export const PRESETS={busan:[35.05,129.12],incheon:[37.42,126.5],ulsan:[35.43,129.43],busanNew:[35.04,128.81],gwangyang:[34.9,127.72],pyeongtaek:[36.97,126.78],pohang:[36.10,129.45]};
 export function validateEnvironment(e){
- const ranges={lat:[-90,90],lon:[-180,180],wind:[0,60],windDirection:[0,360],height:[0,10],period:[2,30],direction:[0,360],heading:[0,360]};
- for(const [key,[min,max]] of Object.entries(ranges))if(!Number.isFinite(e[key])||e[key]<min||e[key]>max)throw Error(`${key}: ${min}–${max} 범위로 입력하세요.`);
+ const ranges={lat:[-90,90],lon:[-180,180],wind:[0,MAX_WIND],windDirection:[0,360],height:[0,10],period:[2,30],direction:[0,360],heading:[0,360]};
+ for(const [key,[min,max]] of Object.entries(ranges))if(!Number.isFinite(e[key])||e[key]<min||e[key]>max)throw Error(`${({wind:'풍속 (m/s)',windDirection:'풍향 (°)',height:'파고 (m)',period:'파주기 (초)',direction:'파향 (°)',heading:'선수 방향 (°)',lat:'위도',lon:'경도'})[key]??key}: ${min}–${max} 범위로 입력하세요.`);
  if(!['clear','cloud','rain','fog','snow'].includes(e.weather))throw Error('날씨를 선택하세요.');
  if(!/^\d{4}-\d{2}-\d{2}T\d{2}:00$/.test(e.localTime)||!Number.isFinite(Date.parse(e.localTime+'+09:00')))throw Error('날짜·시간을 정각으로 선택하세요.');
  return {...e};

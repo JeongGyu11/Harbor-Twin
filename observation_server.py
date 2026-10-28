@@ -218,9 +218,13 @@ def observed_weather(row):
  kind=None;basis='현재일기 관측 코드(WC)'
  if wc is not None and wc.is_integer() and wc<=99:
   wc=int(wc)
-  if wc in (22,26,36,37,38,39) or 70<=wc<=79 or wc in (85,86):kind='snow'
-  elif wc in (11,12,28) or 40<=wc<=49:kind='fog'
-  elif wc in (20,21,23,24,25,27,29) or 50<=wc<=69 or 80<=wc<=84 or 87<=wc<=99:kind='rain'
+  if wc in (36,37,38,39) or 70<=wc<=79 or wc in (85,86):kind='snow'
+  elif wc in (11,12) or 40<=wc<=49:kind='fog'
+  elif 50<=wc<=69 or 80<=wc<=84 or 87<=wc<=99:kind='rain'
+ if wc is not None and (0<=wc<=3 or 20<=wc<=29):
+  if cloud is None or cloud>10:raise ValueError('현재 현상 없음 코드이나 운량이 결측입니다.')
+  kind='clear' if cloud<=2 else 'cloud'
+  basis=f'현재 강수·안개 없음(WC={int(wc)}) · 관측 운량 분류'
  # Without a reported phenomenon, only classify using measured cloud and precipitation.
  if kind is None:
   basis='관측 강수량·운량 기반 시각 분류(예보 아님)'
@@ -229,7 +233,10 @@ def observed_weather(row):
    kind='clear' if cloud<=2 else 'cloud'
    if rain is None:basis='실제 운량 + IR=3(무강수)·IX=2/5(유의 현상 없음) 보고 코드 기반 분류'
  if kind is None:raise ValueError('날씨 코드·강수량·운량 결측으로 날씨를 분류할 수 없습니다.')
- return {'weather':kind,'classificationBasis':basis,'raw':{k:row.get(k) for k in ('WC','WW','CA_TOT','RN','RN_INT','TA','VS','IR','IX')}}
+ try:temperature=float(row.get('TA','nan'))
+ except (ValueError,TypeError):temperature=None
+ if temperature is not None and (not math.isfinite(temperature) or not -80<=temperature<=60):temperature=None
+ return {'weather':kind,'temperature':temperature,'classificationBasis':basis,'raw':{k:row.get(k) for k in ('WC','WW','CA_TOT','RN','RN_INT','TA','VS','IR','IX')}}
 
 def sfc_stations(text):
  rows=[]
@@ -277,9 +284,17 @@ def selected_observations(port,local_time):
   result['marine']={'source':'기상청 해양기상부이 실제 관측','sourceType':'sensor_observation','station':station_info(st),'observedAt':when.isoformat(),'offsetMinutes':delta,'data':data}
  except ValueError as e:result['errors']['marine']=str(e)
  try:
-  st=nearest(sfc_stations(upstream('stn_inf.php',{'inf':'SFC','stn':0,'tm':target.strftime('%Y%m%d%H%M'),'help':1},key)))
-  text=upstream('kma_sfctm3.php',{'tm1':(target-datetime.timedelta(hours=1)).strftime('%Y%m%d%H%M'),'tm2':min(target+datetime.timedelta(hours=1),datetime.datetime.now(KST)).strftime('%Y%m%d%H%M'),'stn':st['STN_ID'],'help':1},key)
-  when,data,delta=nearest_row([r for r in sfc_rows(text) if r['STN']==st['STN_ID']],target,observed_weather)
+  stations=sfc_stations(upstream('stn_inf.php',{'inf':'SFC','stn':0,'tm':target.strftime('%Y%m%d%H%M'),'help':1},key))
+  text=upstream('kma_sfctm3.php',{'tm1':(target-datetime.timedelta(hours=1)).strftime('%Y%m%d%H%M'),'tm2':min(target+datetime.timedelta(hours=1),datetime.datetime.now(KST)).strftime('%Y%m%d%H%M'),'stn':0,'help':1},key)
+  rows=sfc_rows(text)
+  found=False
+  for candidate in sorted(stations,key=lambda x:distance(PORTS[port],(float(x['LAT']),float(x['LON'])))):
+   if station_info(candidate)['distanceKm']>150:break
+   try:
+    when,data,delta=nearest_row([r for r in rows if r['STN']==candidate['STN_ID']],target,observed_weather)
+    st=candidate;found=True;break
+   except ValueError:continue
+  if not found:raise ValueError('150km 이내 관측소에 선택 시각 앞뒤 1시간 유효 날씨 관측이 없습니다.')
   result['weather']={'source':'기상청 ASOS 실제 관측','sourceType':'sensor_observation','station':station_info(st),'observedAt':when.isoformat(),'offsetMinutes':delta,'data':data}
  except ValueError as e:result['errors']['weather']=str(e)
  result['complete']=bool(result['marine'] and result['weather'])
@@ -306,7 +321,7 @@ def collect_actual_weather_once(store):
      st=candidate;found=True;break
     except ValueError:continue
    if not found:raise ValueError('150km 이내 ASOS에 최근 120분 유효 날씨 관측이 없습니다.')
-   store.save_weather(port,{'source':'기상청 ASOS 실제 관측','sourceType':'sensor_observation','provider':'KMA ASOS','validAt':when.isoformat(),'observedAt':when.isoformat(),'fetchedAt':datetime.datetime.now(KST).isoformat(),'station':{'id':st['STN_ID'],'name':st['STN_KO'],'lat':float(st['LAT']),'lon':float(st['LON']),'distanceKm':round(d,2)},'weather':data['weather'],'classificationBasis':data['classificationBasis'],'raw':data['raw'],'temperature':data['raw'].get('TA'),'isDay':int(6<=when.hour<18)})
+   store.save_weather(port,{'source':'기상청 ASOS 실제 관측','sourceType':'sensor_observation','provider':'KMA ASOS','validAt':when.isoformat(),'observedAt':when.isoformat(),'fetchedAt':datetime.datetime.now(KST).isoformat(),'station':{'id':st['STN_ID'],'name':st['STN_KO'],'lat':float(st['LAT']),'lon':float(st['LON']),'distanceKm':round(d,2)},'weather':data['weather'],'classificationBasis':data['classificationBasis'],'raw':data['raw'],'temperature':data['temperature'],'isDay':int(6<=when.hour<18)})
   except ValueError as e:store.fail_weather(port,str(e))
  store.prune()
 

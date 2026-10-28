@@ -115,4 +115,10 @@ class SelectedTests(unittest.TestCase):
   with patch.object(s,'upstream',side_effect=api),patch.object(s,'get_key',return_value='fixture'):
    r=s.selected_observations('busan','2023-01-24T12:00')
   self.assertTrue(r['complete']);self.assertEqual(r['weather']['offsetMinutes'],0);self.assertEqual(r['weather']['data']['weather'],'rain');self.assertEqual(r['marine']['offsetMinutes'],-30)
+ def test_past_phenomena_not_current_precipitation(self):
+  for code in [0,1,2,3,20,21,22,23,24,25,26,27,28,29]:
+   r=s.observed_weather({'WC':str(code),'CA_TOT':'8','RN':'5','TA':'-9'})
+   self.assertEqual(r['weather'],'cloud');self.assertEqual(r['temperature'],-9)
+  r=s.observed_weather({'WC':'61','TA':'-99.9'});self.assertIsNone(r['temperature'])
+  self.assertEqual(s.observed_weather({'WC':'71','TA':'-0.9'})['temperature'],-.9)
 if __name__=='__main__':unittest.main()

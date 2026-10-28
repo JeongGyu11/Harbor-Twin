@@ -1,3 +1,4 @@
+export {evaluateRisk} from './risk.mjs';
 // Deterministic physical look-ahead. No trained AI or operational vessel data.
 export const DEFAULTS={levels:[600,600,600,600],rate:2.5,interval:20,horizon:60,wave:'off',threshold:1.5};
 // Synthetic roll disturbance in degrees; fixed phase, shared simulation clock.
@@ -77,12 +78,20 @@ export function choose(model,input,cfg,mode='predictive'){
   candidates.push({label:`${from} → ${to}`,action,result,score:result.peak+amount*.00003});
  }
  candidates.sort((a,b)=>a.score-b.score);
- const best=candidates[0];const action=best.action&&hold.peak-best.result.peak>.005?best.action:null;
+ let best=candidates[0],action=best.action&&hold.peak-best.result.peak>.005?best.action:null;
+ // Once unloading finishes the horizon peak includes the already-present heel.
+ // It cannot improve retroactively. Continue bounded corrections that reduce
+ // terminal heel without increasing that peak, rather than declaring completion.
+ if(!action&&input.removed.length===input.queue.length&&Math.abs(m.heel)>=.12){
+  const settling=candidates.filter(c=>c.action&&c.result.peak<=hold.peak+1e-7&&Math.abs(hold.final)-Math.abs(c.result.final)>.005);
+  settling.sort((a,b)=>Math.abs(a.result.final)-Math.abs(b.result.final)||a.action.amount-b.action.amount);
+  if(settling.length){best=settling[0];action={...best.action,settling:true};}
+ }
  return {action,candidates,hold,selected:action?best:candidates.find(c=>!c.action),valid:true};
 }
 export function runComparison(model,queue,cfg,mode){
- const s={queue,removed:[],levels:[...cfg.levels],acc:0,transfer:null};
- let peak=0,exceed=0,moved=0,pumpSeconds=0,starts=0,violations=0,time=0,instantPeak=0,instantExceed=0;const points=[];const observationDuration=queue.length*cfg.interval;
+ const s={queue,removed:[...(cfg.initialRemoved??[])],levels:[...cfg.levels],acc:0,transfer:null};
+ let peak=0,exceed=0,moved=0,pumpSeconds=0,starts=0,violations=0,time=0,instantPeak=0,instantExceed=0;const points=[];const observationDuration=(queue.length-s.removed.length)*cfg.interval;
  const limit=queue.length*cfg.interval+5000;
  for(;time<=limit;time++){
   const m=measure(model,s.removed,s.levels);
@@ -94,14 +103,14 @@ export function runComparison(model,queue,cfg,mode){
   // Common observation window for all policies. Wave sampling is 0.25 s;
   // the quasi-static cargo/ballast state is held per 1 s engine step.
   if(time<observationDuration)for(let j=0;j<4;j++){
-   const at=time+j/4,v=observedHeel(m.heel,at,cfg.wave,cfg.environment);
+   const at=time+j/4+(cfg.waveStart??0),v=observedHeel(m.heel,at,cfg.wave,cfg.environment);
    instantPeak=Math.max(instantPeak,Math.abs(v));if(Math.abs(v)>cfg.threshold)instantExceed+=.25;
   }
-  if(time%10===0)points.push({time,heel:m.heel,wave:waveAt(time,cfg.wave,cfg.environment),instant:observedHeel(m.heel,time,cfg.wave,cfg.environment)});
+  if(time%10===0)points.push({time,heel:m.heel,wave:waveAt(time+(cfg.waveStart??0),cfg.wave,cfg.environment),instant:observedHeel(m.heel,time+(cfg.waveStart??0),cfg.wave,cfg.environment)});
   if(s.levels.some(v=>v<80-1e-7||v>1120+1e-7))violations++;
   if(s.removed.length===queue.length&&!s.transfer)break;
   if(Math.abs(m.heel)>cfg.threshold)exceed++;
-  const amount=move(model,s,s.transfer,1);moved+=amount;if(amount>0)pumpSeconds++;
+  const pumpRate=s.transfer?.rate??cfg.rate;const amount=move(model,s,s.transfer,1);moved+=amount;if(amount>0)pumpSeconds+=amount/pumpRate;
   unload(s,cfg,1);
  }
  return {mode,complete:time<=limit,time,peak,exceed,instantPeak,instantExceed,observationDuration,wave:cfg.wave??'off',environment:cfg.environment??null,waveModel:cfg.environment?'environment-v1 / assumed roll + wind disturbance':'two-sine-v1 / 8s+13s / fixed phase',moved,pumpSeconds,starts,violations,levels:s.levels,points};
