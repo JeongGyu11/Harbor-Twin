@@ -1,7 +1,8 @@
 """LLM proxy (Groq first, Gemini as fallback) for the ballast-adjustment assistant.
 
 The browser never sees the API key. Prompts live here so the endpoint only serves the
-three assistant roles (briefing, risk guidance, chat with what-if simulation tool).
+assistant roles (briefing, risk guidance, chat with what-if tool, work log,
+weather check explanation, manifest extraction).
 Numbers always come from the physics model in the browser; the LLM explains them.
 """
 import os, json, time, threading, urllib.request, urllib.error
@@ -117,7 +118,42 @@ PROMPTS = {
         "반드시 simulate_what_if 도구를 호출해 결과로 답하세요. 도구는 현재 화면을 바꾸지 않는 가상 계산입니다.\n"
         "- 답변은 대화하듯 3~5문장으로 씁니다. 첫 문장에 결론(괜찮아요/주의가 필요해요/위험해요)을 말하고, 이유를 한두 문장, 할 일을 한두 문장으로 씁니다. 할 일이 여러 개면 짧은 번호 목록(최대 3개)만 씁니다.\n"
         "- 이 시뮬레이터와 평형수·하역 안전과 무관한 요청은 정중히 범위를 안내합니다."),
+    'report': BASE + (
+        "역할: 하역·평형수 작업 일지 작성. 상태 JSON은 이번 작업의 기록(조건, 결과 수치, 주요 이벤트, 방식 비교)입니다. "
+        "수치 표는 화면이 따로 붙이므로, 당신은 담당자가 읽을 서술 부분만 씁니다. 아래 다섯 덩어리를 이 순서와 머리말 그대로 쓰세요:\n"
+        "[작업 개요] 어떤 조건(항구·기상·하역 간격·추천 방식)에서 컨테이너 몇 개를 내렸는지 2~3문장.\n"
+        "[주요 경과] 기록된 이벤트 중 중요한 것 3~5개를 시간 순서로 '- 00:40 ...' 형식으로.\n"
+        "[결과 평가] 가장 크게 기울었던 정도와 시연 한도 비교, 물을 옮기지 않았다면 어땠을지와의 비교, 옮긴 물 양과 펌프 가동 시간을 2~4문장.\n"
+        "[방식 비교] 비교 실험 결과가 있으면 세 방식의 차이를 2문장, 없으면 '이번 작업에서는 비교 실험을 실행하지 않았어요.' 한 문장.\n"
+        "[다음 작업 제안] 다음 하역 때 바꿔 볼 점 2~3개를 '1. ...' 번호 목록으로.\n"
+        "작업이 끝나지 않았으면 첫 문장에 '작업 중간 기록'이라고 밝히세요. 전체 15~22줄 안으로 씁니다."),
+    'weather': BASE + (
+        "역할: 하역 전 기상 위험 판단 설명. 상태 JSON의 verdict(정상/주의/중지 검토)는 정해진 기준표로 이미 판정된 값입니다. "
+        "절대 판정을 바꾸거나 새 판정을 만들지 말고, 그 판정을 담당자에게 설명하세요. 형식:\n"
+        "판단: (verdict를 그대로 쓰고, 이유를 한 문장)\n"
+        "근거:\n- 바람: ...\n- 파도: ...\n- 비·눈·시정: ...\n- 우리 배 예측: (shipForecast가 있으면 그 결과를 한 문장)\n"
+        "권장 조치:\n1. ...\n2. ...\n"
+        "참고: (관측소와 관측 시각, 기준표는 시연용이라 터미널 운영 기준으로 바꿔 써야 한다는 점을 한 문장)\n"
+        "값이 없는 항목은 '관측값 없음'이라고 쓰세요. 전체 8~12줄."),
 }
+
+MANIFEST_PROMPT = (
+    "당신은 컨테이너 적하목록(manifest)·하역 지시서 변환기입니다. 사용자가 붙여 넣은 글에서 컨테이너마다 "
+    "위치, 중량(톤), 하역 순서를 뽑아 JSON 하나만 출력합니다. 설명 문장, 마크다운, 코드 블록은 쓰지 않습니다.\n"
+    "대상 선박 격자(가상 선박): BAY 1~6 (1=선미 쪽, 6=선수 쪽), ROW 1~4 (1=좌현 바깥, 2=좌현 안쪽, 3=우현 안쪽, 4=우현 바깥), "
+    "TIER 1~3 (1=창내 하부, 2=갑판 위 1단, 3=갑판 위 2단).\n"
+    "실제 베이플랜 표기 변환 규칙:\n"
+    "- BAY가 7 이상(예: 01~12 두 자리 표기)이면 올림(n/2)로 바꾸고 6을 넘으면 제외합니다.\n"
+    "- ROW 두 자리 표기: 01→3, 02→2, 03→4, 04→1. 그 밖의 홀수는 우현 바깥(4), 짝수는 좌현 바깥(1). '좌현/우현/port/stbd'만 있으면 바깥 줄(1 또는 4).\n"
+    "- TIER 두 자리 표기: 02~18(창내)→1, 82→2, 84 이상→3. '하부/창내/hold'→1, '갑판/deck'은 1단이면 2, 2단 이상이면 3.\n"
+    "- 중량: kg이면 1000으로 나눠 톤으로. VGM이나 총중량을 우선합니다. 소수 첫째 자리까지.\n"
+    "- 하역 순서가 적혀 있으면 그 번호, 없으면 0.\n"
+    "- 위치를 알 수 없거나 격자 범위를 벗어나는 줄은 items에 넣지 말고 notes에 짧게 이유를 씁니다.\n"
+    "출력 형식(정확히 이 키만): {\"items\":[[bay,row,tier,weightT,order,\"식별자\"],...],\"notes\":[\"...\"]}\n"
+    "식별자는 컨테이너 번호나 원문의 짧은 이름(15자 이하). notes는 쉬운 한국어 문장 최대 5개(가정한 변환 규칙, 제외한 줄 등)."
+)
+PROMPTS['manifest'] = MANIFEST_PROMPT
+
 
 TOOLS = [{
     'type': 'function',
@@ -238,13 +274,18 @@ def complete(body):
         return 400, {'error': '지원하지 않는 AI 역할입니다.'}
     context = json.dumps(body.get('context') or {}, ensure_ascii=False, separators=(',', ':'))[:9000]
     messages = [{'role': 'system', 'content': PROMPTS[role] + '\n\n현재 시뮬레이션 상태 JSON:\n' + context}]
-    if role == 'chat':
+    if role == 'manifest':
+        text = str(body.get('manifest') or '').strip()[:6000]
+        if len(text) < 10:
+            return 400, {'error': '적하목록 내용을 붙여 넣으세요.'}
+        messages = [{'role': 'system', 'content': PROMPTS['manifest']}, {'role': 'user', 'content': text}]
+    elif role == 'chat':
         messages += _clean_messages(body.get('messages'))
         if len(messages) < 2:
             return 400, {'error': '질문을 입력하세요.'}
     else:
         messages.append({'role': 'user', 'content': '위 상태로 작성해 주세요.'})
-    payload = {'messages': messages, 'temperature': 0.15, 'top_p': 0.9, 'max_tokens': 700 if role == 'chat' else 420}
+    payload = {'messages': messages, 'temperature': 0 if role == 'manifest' else 0.15, 'top_p': 0.9, 'max_tokens': {'chat': 700, 'report': 1000, 'manifest': 2200, 'weather': 520}.get(role, 420)}
     if role == 'chat':
         payload['tools'] = TOOLS
         payload['tool_choice'] = 'auto'

@@ -327,10 +327,66 @@ function aiWhatIf(p={}){
   modelVerdict:over?'추천 이송을 해도 파도를 합친 순간 기울기가 시연 한도를 넘습니다. 하역 일시 중지·하역 간격 확대를 검토하세요.':best?'추천 이송을 적용하면 예측 구간에서 시연 한도 안입니다.':'이송 없이도 예측 구간에서 시연 한도 안입니다.',
   note:'가정 물리 모델의 가상 계산이며 화면의 시뮬레이션은 바뀌지 않았습니다.'+(assumed.length?` ${assumed.join('·')} 방향을 지정하지 않아 가장 불리한 측면(정횡) 방향을 가정했습니다.`:'')+(!config.environment&&envChanged&&changes.height===undefined&&synthetic?` 파고는 현재 합성 파도(${Decision.WAVES[config.wave].label})에 해당하는 ${r2(synthetic/.35)}m로 두었습니다.`:'')};
 }
+// ③ Work-log facts: every number is taken from the simulation record, the LLM only writes the narrative.
+function aiReportData(){
+ const h=state.history,peakOf=key=>{let best=null;for(const v of h)if(Number.isFinite(v[key])&&(!best||Math.abs(v[key])>Math.abs(best[key])))best=v;return best;};
+ const side=v=>v<0?'좌현':v>0?'우현':'중앙';
+ let over=0;for(let i=1;i<h.length;i++)if(Number.isFinite(h[i].instant)&&Math.abs(h[i].instant)>config.threshold)over+=h[i].time-h[i-1].time;
+ const ph=peakOf('heel'),pi=peakOf('instant'),pb=peakOf('baseline'),m=metrics(),env=config.environment;
+ const labels={none:'무조정',rule:'현재 상태 기반 규칙',predictive:'60초 예측 기반 탐색'};
+ const events=[...state.events].reverse(),keep=events.length>24?[...events.slice(0,4),...events.slice(-20)]:events;
+ return {
+  vessel:'MV HARBOR ONE (가상 컨테이너선)',cargoSource:$('#dataSource')?.textContent??'',
+  status:complete()?'작업 완료':state.removed.length===MAX_STEPS?'하역 완료 · 평형수 조정 마무리 중':'작업 중간 기록',
+  conditions:{strategy:strategy==='predictive'?'60초 예측 기반 탐색':'현재 상태 기반 규칙',unloadIntervalS:config.interval,pumpRateTps:config.rate,thresholdDeg:config.threshold,
+   environment:env?{source:env.source,port:env.port??null,time:env.localTime??null,weather:env.weather,windMps:env.wind,waveHeightM:env.height,wavePeriodS:env.period}:{source:'합성 파도',wave:Decision.WAVES[config.wave??'off'].label},
+   approval:$('#auto')?.checked?'시연 자동 승인':'담당자 승인'},
+  unloading:{containersUnloaded:state.removed.length-initialRemoved.length,containersTotal:initialCount(),unit:'컨테이너 개수(톤 아님)',elapsed:fmtTime(state.time-initialTime),
+   cargoUnloadedT:r2(cargo.filter(c=>state.removed.includes(c.id)&&!initialRemoved.includes(c.id)).reduce((a,c)=>a+c.weight,0))},
+  results:{maxHeelDeg:ph?r2(Math.abs(ph.heel)):null,maxHeelSide:ph?side(ph.heel):null,maxHeelAt:ph?fmtTime(ph.time-initialTime):null,
+   maxInstantWithWavesDeg:pi?r2(Math.abs(pi.instant)):null,secondsOverThresholdWithWaves:r2(over),
+   noAdjustmentMaxHeelDeg:pb?r2(Math.abs(pb.baseline)):null,finalHeelDeg:r2(m.heel),finalGmM:r2(m.gm),
+   transfersApproved:state.applied,ballastMovedT:r2(state.transferred),pumpSecondsEstimate:r2(state.transferred/config.rate)},
+  tanks:tanks.map((t,i)=>({id:t.id,name:t.name,startT:Math.round(config.levels[i]),endT:Math.round(state.tanks[i])})),
+  comparison:comparisonResult?comparisonResult.results.map(r=>r.peak===undefined?{method:labels[r.mode],result:r.reason}:{method:labels[r.mode],peakHeelDeg:r2(r.peak),secondsOverThreshold:r.exceed,movedT:r2(r.moved),pumpSeconds:r2(r.pumpSeconds),pumpStarts:r.starts,complete:r.complete}):null,
+  events:keep.map(e=>`${e.time} ${e.message}`),
+  risk:currentRisk().label
+ };
+}
+// ⑤ Apply an AI-extracted manifest: [bay,row,tier,weight,order,label] on the 6×4×3 demo grid.
+function manifestPreview(items){
+ const out=[],seen=new Set(),skipped=[];
+ for(const raw of items||[]){
+  const [bay,row,tier,weight,order,label]=Array.isArray(raw)?raw:[raw?.bay,raw?.row,raw?.tier,raw?.weight,raw?.order,raw?.label];
+  const b=Math.round(+bay),r=Math.round(+row),t=Math.round(+tier),w=+weight,name=String(label??'').slice(0,20);
+  if(!(b>=1&&b<=6&&r>=1&&r<=4&&t>=1&&t<=3)){skipped.push(`${name||'이름 없음'}: 위치가 격자 범위 밖`);continue;}
+  if(!(w>=1&&w<=100)){skipped.push(`${name||'BAY '+b}: 중량 ${weight}톤은 1–100톤 범위 밖`);continue;}
+  const slot=cargo.find(c=>c.bay===b-1&&c.row===r-1&&c.tier===t-1);
+  if(seen.has(slot.id)){skipped.push(`${name||slot.id}: BAY ${b}·ROW ${r}·TIER ${t} 위치 중복`);continue;}
+  seen.add(slot.id);out.push({id:slot.id,label:name,bay:b,row:r,tier:t,side:r<=2?'좌현':'우현',weight:Math.round(w*10)/10,order:Number.isFinite(+order)&&+order>0?Math.round(+order):0});
+ }
+ return {items:out,skipped};
+}
+function applyManifest(items){
+ const {items:list,skipped}=manifestPreview(items);
+ if(!list.length)throw Error('적용할 수 있는 화물이 없습니다.');
+ state.running=false;originalCargo.forEach((c,i)=>Object.assign(cargo[i],c));
+ for(const it of list)cargo.find(c=>c.id===it.id).weight=it.weight;
+ const listed=new Set(list.map(i=>i.id)),wanted=[...list].sort((a,b)=>(a.order||1e9)-(b.order||1e9));
+ const rest=cargo.filter(c=>!listed.has(c.id)).sort((a,b)=>b.tier-a.tier||a.bay-b.bay||Math.abs(a.z)-Math.abs(b.z)||a.z-b.z);
+ const placed=new Set(),order=[];let moved=0;
+ const place=c=>{if(placed.has(c.id))return;for(const top of cargo.filter(v=>v.bay===c.bay&&v.row===c.row&&v.tier>c.tier).sort((a,b)=>b.tier-a.tier))if(!placed.has(top.id)){placed.add(top.id);order.push(top.id);moved++;}placed.add(c.id);order.push(c.id);};
+ wanted.forEach(it=>place(cargo.find(c=>c.id===it.id)));rest.forEach(place);
+ initialRemoved=[];initialTime=0;placementActive=false;customOrder=order;referenceKM=Decision.makeModel(cargo).km;
+ invalidateComparison();reset();$('#scenario').disabled=true;
+ $('#dataSource').textContent=`AI 적하목록 변환 · ${list.length}개 반영 / 나머지 ${72-list.length}개 예제값`;
+ event(`AI 적하목록 변환 적용 · 화물 ${list.length}개 중량·순서 반영${moved?` · 위쪽 화물 ${moved}개를 먼저 내리도록 순서 조정`:''}`);update();
+ return {applied:list.length,reordered:moved,skipped};
+}
 // Read-only snapshot for QA and external prototype inspection.
-window.harborTwin={aiContext,aiWhatIf,setCamera:(y=yaw,p=pitch,d=distance)=>{yaw=y;pitch=Math.max(.04,Math.min(1.25,p));distance=Math.max(90,Math.min(300,d));},snapshot:()=>({phase:complete()?'complete':state.transfer?'transfer':recommendation?'approval':'unloading',notice:state.notice,applied:state.applied,transferred:state.transferred,running:state.running,time:state.time,removed:state.removed.length,initialRemoved:[...initialRemoved],initialCount:initialCount(),initialTime,cargo:cargo.map(c=>({...c,loaded:!state.removed.includes(c.id)})),tanks:[...state.tanks],metrics:metrics(),baseline:metrics(false),config:{...config},wave:Decision.waveAt(state.time,config.wave,config.environment),instantHeel:Decision.observedHeel(metrics().heel,state.time,config.wave,config.environment),strategy,events:[...state.events],recommendation,transfer:state.transfer,history:[...state.history],risk:currentRisk(),view:state.view,deck:state.deck})};
+window.harborTwin={aiContext,aiWhatIf,aiReportData,manifestPreview,applyManifest,isComplete:()=>complete(),setCamera:(y=yaw,p=pitch,d=distance)=>{yaw=y;pitch=Math.max(.04,Math.min(1.25,p));distance=Math.max(90,Math.min(300,d));},snapshot:()=>({phase:complete()?'complete':state.transfer?'transfer':recommendation?'approval':'unloading',notice:state.notice,applied:state.applied,transferred:state.transferred,running:state.running,time:state.time,removed:state.removed.length,initialRemoved:[...initialRemoved],initialCount:initialCount(),initialTime,cargo:cargo.map(c=>({...c,loaded:!state.removed.includes(c.id)})),tanks:[...state.tanks],metrics:metrics(),baseline:metrics(false),config:{...config},wave:Decision.waveAt(state.time,config.wave,config.environment),instantHeel:Decision.observedHeel(metrics().heel,state.time,config.wave,config.environment),strategy,events:[...state.events],recommendation,transfer:state.transfer,history:[...state.history],risk:currentRisk(),view:state.view,deck:state.deck})};
 import { initTutorial } from './tutorial.js?v=home2';
-import { initAssistant } from './ai-assistant.js?v=ai7';
+import { initAssistant } from './ai-assistant.js?v=ai8';
 initAssistant();
 initTutorial({
   pause:()=>{state.running=false;update();},
