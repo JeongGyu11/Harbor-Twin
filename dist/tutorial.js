@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'harbor-twin.tutorial.v29';
+const WELCOME_KEY = 'harbor-twin.welcome.v1';
 
 export function initTutorial({ pause, captureView, restoreView, showView }) {
   const help = document.querySelector('#help');
@@ -129,7 +130,10 @@ export function initTutorial({ pause, captureView, restoreView, showView }) {
     position();
     find('.tutorial-next').focus({preventScroll:true});
   }
+  let welcome=null;
+  function dismissWelcome(){launch.classList.remove('is-new');welcome?.remove();welcome=null;try{localStorage.setItem(WELCOME_KEY,'done');}catch{}}
   function open(mode='core') {
+    dismissWelcome();
     if(active){setGuideMode(mode);return;}setGuideMode(mode);
     savedFocus=document.activeElement;savedPanel=document.body.dataset.panel??'';savedMode=document.body.dataset.environmentMode; savedTimeMode=document.querySelector('#observation-time-mode')?.value;savedView=captureView(); savedScroll=scrollY;savedDrawerScroll=document.querySelector('.drawer-content')?.scrollTop??0;
     savedDetails=[...stage.querySelectorAll('details')].map(node=>({node,open:node.open}));pause(); index=0; active=true; overlay.hidden=false;
@@ -180,6 +184,15 @@ export function initTutorial({ pause, captureView, restoreView, showView }) {
   overlay.addEventListener('touchend',()=>{touchY=null;});
   overlay.addEventListener('touchcancel',()=>{touchY=null;});
   help.onclick=()=>open('core');launch.onclick=()=>open('core');detailLaunch.onclick=()=>open('detail');find('#guide-core').onclick=()=>setGuideMode('core');find('#guide-detail').onclick=()=>setGuideMode('detail');
+  // First visit: show the home screen with a small welcome bar instead of opening the guide.
   let seen=false;try{seen=localStorage.getItem(STORAGE_KEY)==='seen';}catch{}
-  if(!seen)requestAnimationFrame(open);
+  let welcomed=false;try{welcomed=localStorage.getItem(WELCOME_KEY)==='done';}catch{}
+  if(!seen&&!welcomed){
+    launch.classList.add('is-new');
+    welcome=document.createElement('section');welcome.className='welcome-banner';welcome.setAttribute('role','region');welcome.setAttribute('aria-label','처음 방문 안내');
+    welcome.innerHTML=`<div class="welcome-text"><strong>처음이신가요?</strong><span>아래 <b>▶ 시뮬레이션 시작</b>을 눌러 바로 하역을 보거나, <b>시작 가이드</b>로 5단계 사용법을 확인하세요.</span></div><div class="welcome-actions"><button type="button" class="welcome-guide">◈ 시작 가이드 보기</button><button type="button" class="welcome-skip">바로 둘러보기</button><button type="button" class="welcome-close" aria-label="안내 닫기">×</button></div>`;
+    document.querySelector('.page-title').after(welcome);
+    welcome.querySelector('.welcome-guide').onclick=()=>open('core');
+    welcome.querySelector('.welcome-skip').onclick=dismissWelcome;welcome.querySelector('.welcome-close').onclick=dismissWelcome;
+  }
 }

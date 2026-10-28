@@ -49,3 +49,18 @@ html.pseudo-fullscreen-lock,html.pseudo-fullscreen-lock body{overflow:hidden}
 @media(max-width:760px){.fs-hud{left:8px;right:8px;top:8px;gap:8px;padding:8px}.fs-stats{gap:10px}.fs-stats b{font-size:13px}.fs-brand{min-width:0}.fs-actions{margin-left:0;width:100%}.fs-actions button{flex:1}#viewBody:fullscreen .deck-selector,#viewBody.pseudo-fullscreen .deck-selector{top:150px}}
 /* Fill the whole view panel (the 3D canvas previously sized itself from its own content). */
 #viewBody>#scene{position:absolute;inset:0}
+/* Home-first onboarding: prominent guide button and first-visit welcome bar */
+.page-title .tutorial-launch{margin-left:auto;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;background:var(--mint);color:#062a20;border:1px solid var(--mint);font-size:15px;font-weight:800;letter-spacing:.2px;padding:13px 22px;border-radius:10px;box-shadow:0 6px 22px #63e4c033;cursor:pointer;transition:transform .15s,box-shadow .15s,background .15s}
+.page-title .tutorial-launch:hover{background:#7cf0cf;transform:translateY(-1px);box-shadow:0 10px 28px #63e4c055}
+.page-title .tutorial-launch:focus-visible{outline:3px solid #ffffffcc;outline-offset:3px}
+.page-title .tutorial-launch.is-new{animation:guide-pulse 2.2s ease-in-out infinite}
+@keyframes guide-pulse{0%,100%{box-shadow:0 6px 22px #63e4c033,0 0 0 0 #63e4c066}50%{box-shadow:0 6px 22px #63e4c055,0 0 0 10px #63e4c000}}
+@media(prefers-reduced-motion:reduce){.page-title .tutorial-launch.is-new{animation:none}}
+.welcome-banner{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:0 0 18px;padding:14px 16px 14px 18px;background:linear-gradient(90deg,#123a35,#0f2433);border:1px solid #2f6b5f;border-left:4px solid var(--mint);border-radius:10px;color:#e6f3f0}
+.welcome-text{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 360px}.welcome-text strong{font-size:15px;color:#fff}.welcome-text span{font-size:13px;line-height:1.6;color:#bcd6d2}.welcome-text b{color:#8af0d3;font-weight:700}
+.welcome-actions{display:flex;align-items:center;gap:8px}
+.welcome-actions button{white-space:nowrap;height:38px;padding:0 15px;border-radius:8px;font-size:13px;cursor:pointer}
+.welcome-guide{background:var(--mint);color:#062a20;border:1px solid var(--mint);font-weight:800}.welcome-guide:hover{background:#7cf0cf}
+.welcome-skip{background:transparent;color:#cfe3e8;border:1px solid #4a6b78}.welcome-skip:hover{border-color:#8fb2bf}
+.welcome-close{width:38px;padding:0!important;background:transparent;color:#9fb7c2;border:1px solid transparent;font-size:20px}.welcome-close:hover{color:#fff}
+@media(max-width:620px){.page-title .tutorial-launch{font-size:14px;padding:12px 16px;margin:10px 0 0}.welcome-banner{padding:12px}.welcome-actions{width:100%}.welcome-actions button{white-space:nowrap;font-size:12.5px;padding:0 10px}.welcome-guide,.welcome-skip{flex:1}}
