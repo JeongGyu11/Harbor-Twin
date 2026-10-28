@@ -385,7 +385,7 @@ function applyManifest(items){
 }
 // Read-only snapshot for QA and external prototype inspection.
 window.harborTwin={aiContext,aiWhatIf,aiReportData,manifestPreview,applyManifest,isComplete:()=>complete(),setCamera:(y=yaw,p=pitch,d=distance)=>{yaw=y;pitch=Math.max(.04,Math.min(1.25,p));distance=Math.max(90,Math.min(300,d));},snapshot:()=>({phase:complete()?'complete':state.transfer?'transfer':recommendation?'approval':'unloading',notice:state.notice,applied:state.applied,transferred:state.transferred,running:state.running,time:state.time,removed:state.removed.length,initialRemoved:[...initialRemoved],initialCount:initialCount(),initialTime,cargo:cargo.map(c=>({...c,loaded:!state.removed.includes(c.id)})),tanks:[...state.tanks],metrics:metrics(),baseline:metrics(false),config:{...config},wave:Decision.waveAt(state.time,config.wave,config.environment),instantHeel:Decision.observedHeel(metrics().heel,state.time,config.wave,config.environment),strategy,events:[...state.events],recommendation,transfer:state.transfer,history:[...state.history],risk:currentRisk(),view:state.view,deck:state.deck})};
-import { initTutorial } from './tutorial.js?v=home2';
+import { initTutorial } from './tutorial.js?v=ai1';
 import { initAssistant } from './ai-assistant.js?v=ai8';
 initAssistant();
 initTutorial({

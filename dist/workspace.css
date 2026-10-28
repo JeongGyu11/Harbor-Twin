@@ -83,3 +83,13 @@ html.pseudo-fullscreen-lock,html.pseudo-fullscreen-lock body{overflow:hidden}
 @keyframes vh-tap{0%,100%{transform:translateX(-5px)}50%{transform:translateX(5px)}}
 @media(prefers-reduced-motion:reduce){.vh-wheel,.vh-item:first-child .vh-icon svg,.vh-finger{animation:none}}
 @media(max-width:620px){.vh-card{flex-direction:column;align-items:stretch;gap:10px;padding:16px 18px 12px;max-width:calc(100% - 40px)}.vh-item b{font-size:14px}.vh-item span{font-size:12px}.vh-icon,.vh-icon svg{width:34px;height:34px}.vh-icon .vh-key{min-width:30px;height:30px;font-size:15px}}
+/* AI 기능 가이드 버튼 */
+.page-title .tutorial-ai-launch{margin-left:10px;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;background:linear-gradient(135deg,#6d7cff,#3fb8e8);color:#fff;border:1px solid #8fa0ff;font-size:15px;font-weight:800;letter-spacing:.2px;padding:13px 20px;border-radius:10px;box-shadow:0 6px 22px #6d7cff44;cursor:pointer;transition:transform .15s,box-shadow .15s,filter .15s}
+.page-title .tutorial-ai-launch:hover{transform:translateY(-1px);box-shadow:0 10px 28px #6d7cff66;filter:brightness(1.08)}
+.page-title .tutorial-ai-launch:focus-visible{outline:3px solid #ffffffcc;outline-offset:3px}
+.tutorial-ai-launch .ai-spark{font-size:16px;line-height:1}
+.welcome-ai{background:linear-gradient(135deg,#6d7cff,#3fb8e8);color:#fff;border:1px solid #8fa0ff;font-weight:800}
+.tutorial-mode-switch #guide-ai[aria-pressed=true]{background:#2c3570;color:#d6dcff;border-color:#8fa0ff}
+@media(max-width:620px){.page-title .tutorial-ai-launch{font-size:14px;padding:12px 14px;margin:10px 0 0 8px}}
+.tutorial-docked .harbor-launcher{right:calc(var(--tutorial-dock-width,440px) + 46px)}
+.tutorial-docked .harbor-chat{right:calc(var(--tutorial-dock-width,440px) + 46px)}

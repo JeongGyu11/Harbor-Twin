@@ -10,6 +10,7 @@ export function initTutorial({ pause, captureView, restoreView, showView }) {
   launch.textContent = '◈ 시작 가이드';
   launch.type = 'button';
   document.querySelector('.page-title').append(launch);
+  const aiLaunch=document.createElement('button');aiLaunch.className='tutorial-ai-launch';aiLaunch.type='button';aiLaunch.innerHTML='<span class="ai-spark">✦</span> AI 기능 가이드';document.querySelector('.page-title').append(aiLaunch);
   const detailLaunch=document.createElement('button');detailLaunch.className='tutorial-detail-launch';detailLaunch.type='button';detailLaunch.textContent='상세 안내';document.querySelector('.page-title').append(detailLaunch);
 
   const overlay = document.createElement('div');
@@ -18,7 +19,7 @@ export function initTutorial({ pause, captureView, restoreView, showView }) {
   overlay.innerHTML = `<div class="tutorial-shade"></div><div class="tutorial-spotlight"></div>
     <section class="tutorial-card" role="dialog" aria-modal="true" aria-labelledby="tutorial-title" aria-describedby="tutorial-description" tabindex="-1">
       <div class="tutorial-top"><div class="tutorial-dock-title"><span>HARBOR TWIN / GUIDE</span><small>실제 화면과 나란히 보는 사용 안내</small></div><button type="button" class="tutorial-close" aria-label="튜토리얼 닫기">×</button></div>
-      <div class="tutorial-mode-switch" role="group" aria-label="안내 종류"><button type="button" id="guide-core" aria-pressed="true">핵심 5단계</button><button type="button" id="guide-detail" aria-pressed="false">상세 기능 안내</button></div><div class="tutorial-art" aria-hidden="true">◈<span>YOUR FIRST VOYAGE</span></div>
+      <div class="tutorial-mode-switch" role="group" aria-label="안내 종류"><button type="button" id="guide-core" aria-pressed="true">핵심 5단계</button><button type="button" id="guide-detail" aria-pressed="false">상세 기능 안내</button><button type="button" id="guide-ai" aria-pressed="false">✦ AI 기능</button></div><div class="tutorial-art" aria-hidden="true">◈<span>YOUR FIRST VOYAGE</span></div>
       <label class="tutorial-jump-label" for="tutorial-jump">필요한 기능 바로 찾기</label><select id="tutorial-jump" aria-label="튜토리얼 기능 선택"></select><div class="tutorial-step" aria-live="polite"></div><h2 id="tutorial-title"></h2><p id="tutorial-description"></p>
       <ol class="tutorial-instructions"></ol><div class="tutorial-result"></div><div class="tutorial-tip"></div><div class="tutorial-dots" aria-hidden="true"></div>
       <div class="tutorial-actions"><button type="button" class="tutorial-skip">건너뛰기</button><div><button type="button" class="tutorial-back">이전</button><button type="button" class="tutorial-next">다음 →</button></div></div>
@@ -76,8 +77,18 @@ export function initTutorial({ pause, captureView, restoreView, showView }) {
     {target:'.experiment',title:'4. 동일 조건에서 결과를 비교해요.',text:'결과 비교에서 3가지 방식 비교 실행을 누릅니다.',instructions:['무조정·현재 상태 규칙·60초 예측 탐색을 같은 화물·하역 순서·환경으로 비교합니다.','최대 기울기·기준 초과시간·이송량을 함께 보세요. 펌프 가동시간은 이송량÷유량입니다(412.5t÷2.5t/s=165초).','최대·초과시간은 하역1초/파동0.25초 표본 계산값입니다. 화면은 반올림 값이며 조건·결과 JSON 저장으로 원본을 남깁니다.'],result:'같은 입력의 모델 비교이며 실제 현장 개선율이나 비용 절감을 입증하는 결과는 아닙니다.',tip:'입력값을 바꾸면 비교 결과를 다시 계산해야 합니다.'},
     {...detailedSteps[0],title:'5. 관측값·계산값·연출을 구분해요.'}
   ];
+  const aiSteps=[
+    {title:'AI 기능 6가지를 한 번에 익혀요.',text:'HARBOR TWIN의 AI는 하역 전 → 하역 중 → 하역 후 업무 흐름마다 들어가 있어요. 계산과 판정은 물리 모델과 기준표가 하고, AI(Groq LLM)는 그 결과를 쉬운 말로 설명하고, 글을 쓰고, 자료를 읽어 줘요.',instructions:['하역 전: ④ 기상 위험 판단 · ⑤ 적하목록 → 하역 계획 변환','하역 중: ① 평형수 조정 브리핑 · ② 하버에게 묻기(만약에 시뮬레이션) · ⑥ 위험 대응 안내','하역 후: ③ 작업 일지 자동 작성','이 순서대로 화면 위치를 하나씩 보여 드릴게요.'],result:'다음을 누르면 첫 번째 기능 위치로 이동해요.',tip:'AI 답변은 참고용이에요. 최종 판단은 담당자와 선박의 승인된 자료를 따릅니다.'},
+    {target:'.ai-weather',title:'④ 하역 전 기상 위험 판단',text:'기상청 실제 관측(해양기상부이 바람·파도, ASOS 시정·비)으로 지금 하역해도 되는지 판정해요.',instructions:['화면을 열면 판정이 자동으로 나와요. 초록=하역 정상, 노랑=주의, 빨강=중지 검토예요.','표에서 바람·파도·시정·비·눈과 “우리 배 예측”(이 날씨에서 60초 동안 얼마나 기울지)을 항목별로 확인해요.','‘AI 설명 받기’를 누르면 AI가 판정 이유와 지금 할 일을 쉬운 말로 알려 줘요.','위쪽 지역을 바꾸면 그 항구 기준으로 다시 판정해요.'],result:'판정은 정해진 기준표가 하고, AI는 판정을 바꾸지 않고 설명만 해요.',tip:'기준값(풍속 10·15m/s, 파고 1·2m, 시정 3·1km)은 시연용이에요. 실제로는 터미널 운영 기준으로 바꿔 씁니다.'},
+    {target:'.ai-manifest',title:'⑤ 적하목록 → 하역 계획 변환',text:'형식이 제각각인 적하목록·하역 지시서를 붙여 넣으면 AI가 화물마다 위치·중량·하역 순서를 뽑아 줘요.',instructions:['입력칸에 적하목록을 붙여 넣어요. 자료가 없으면 ‘예시 넣기’를 눌러요.','‘AI로 변환’을 누르면 읽은 결과가 표로 나와요. 위치가 없는 줄처럼 제외한 항목과 이유도 보여 줘요.','표를 확인한 뒤 ‘이 계획으로 시뮬레이션 적용’을 눌러야 반영돼요(담당자 승인).','같은 칸 위쪽 화물을 먼저 내리도록 순서를 자동으로 맞춰 줘요.'],result:'적용 후 ▶ 시뮬레이션 시작을 누르면 그 순서대로 하역해요.',tip:'BAY 05·ROW 04·TIER 84 같은 실제 베이플랜 표기도, “3번 베이 우현 바깥 갑판 2단” 같은 말도 읽어요. 원래대로 돌리려면 ‘합성 예제 복원’을 누르세요.'},
+    {target:'.ai-briefing',title:'① 평형수 조정 브리핑',text:'추천 이송안과 현재 기울기·탱크 수위·다음 하역 화물·기상을 보고, 담당자(일등항해사)용 짧은 브리핑을 써요.',instructions:['시뮬레이션을 시작하면 새 이송안이 나올 때 자동으로 갱신돼요.','‘브리핑 생성’ 버튼으로 언제든 직접 만들 수 있어요.','지금 · 곧 · 추천 · 주의 네 줄로 읽으면 돼요.'],result:'추천 이송안의 근거를 이해한 뒤 ‘추천 운전안 적용’으로 승인해요.',tip:'수치는 모두 물리 모델 계산값이고 AI는 숫자를 지어내지 않도록 제한돼 있어요.'},
+    {target:'.harbor-launcher',title:'② 하버에게 묻기 · 만약에 시뮬레이션',text:'오른쪽 아래 배 캐릭터 ‘하버’를 누르면 AI 채팅창이 열려요. 페이지를 내려도 같은 자리에 있어요.',instructions:['“지금 상황 요약해줘”처럼 현재 상태를 물어볼 수 있어요.','“풍속 20m/s면 하역 계속해도 돼?”, “P-A에서 S-A로 200t 옮기면 어때?”처럼 물으면 AI가 실제 시뮬레이터로 가상 계산을 돌려 답해요.','가상 계산은 화면의 시뮬레이션을 바꾸지 않아요.','↺ 새 대화 버튼으로 대화를 지우고 예시 질문부터 다시 시작할 수 있어요.'],result:'채팅창 아래 예시 질문 버튼을 눌러 바로 써 보세요.',tip:'전체화면에서도 하버를 쓸 수 있어요. Esc로 채팅창을 닫아요.'},
+    {target:'#model-risk',title:'⑥ 위험 대응 안내',text:'기울기·복원력(GM)·탱크 수위가 주의 또는 기준 초과 단계가 되면 이 칸에 AI 안내 카드가 나타나요.',instructions:['왜 위험한지 한 문장으로 알려 줘요.','지금 할 일 1~3(하역 일시 중지, 이송 방향 확인 등)을 체크리스트처럼 보여 줘요.','계속 지켜볼 계기도 알려 줘요.'],result:'위험 단계는 규칙 기준으로 정해지고, AI는 원인과 조치를 설명해요.',tip:'“한쪽 먼저 하역” 시나리오를 자동 승인 없이 재생하면 안내 카드를 쉽게 볼 수 있어요.'},
+    {target:'.ai-report',title:'③ 작업 일지 자동 작성',text:'하역이 끝나면 AI가 작업 일지를 한 번 자동으로 써요. 진행 중에는 ‘일지 작성’으로 중간 기록을 만들 수 있어요.',instructions:['위쪽 표: 내린 컨테이너 수, 최대 기울기, 물을 안 옮겼을 때 비교, 이송량, 펌프 가동 시간 등 기록 수치','아래 글: 작업 개요 · 주요 경과 · 결과 평가 · 방식 비교 · 다음 작업 제안','‘내려받기’로 텍스트 파일로 저장해요.'],result:'하역 전에 ‘3가지 방식 비교 실행’을 해 두면 일지에 방식 비교도 들어가요.',tip:'표의 숫자는 시뮬레이션 기록 그대로이고, AI는 서술만 써요.'},
+    {title:'추천 시연 순서',text:'하역 전부터 하역 후까지 AI가 업무에 들어간 모습을 한 번에 볼 수 있어요.',instructions:['1. ④ 기상 판단으로 오늘 하역해도 되는지 확인','2. ⑤ 예시 적하목록을 넣어 하역 계획으로 변환·적용','3. ▶ 시뮬레이션 시작 → ① 브리핑, ② 하버에게 묻기, ⑥ 위험 안내 확인','4. 하역이 끝나면 ③ 작업 일지 확인·내려받기'],result:'가이드를 닫고 직접 써 보세요.',tip:'AI 사용이 몰리면 “몇 초 뒤 다시 시도할게요”가 뜰 수 있어요. 고장이 아니라 잠시 기다렸다가 자동으로 이어서 답해요.'}
+  ];
   let steps=coreSteps,guideMode='core';
-  function setGuideMode(mode){guideMode=mode==='detail'?'detail':'core';steps=guideMode==='detail'?detailedSteps:coreSteps;index=0;find('#guide-core').setAttribute('aria-pressed',String(guideMode==='core'));find('#guide-detail').setAttribute('aria-pressed',String(guideMode==='detail'));find('#tutorial-jump').innerHTML=steps.map((step,i)=>`<option value="${i}">${String(i+1).padStart(2,'0')}. ${step.title}</option>`).join('');if(active)render();}
+  function setGuideMode(mode){guideMode=['detail','ai'].includes(mode)?mode:'core';steps=guideMode==='detail'?detailedSteps:guideMode==='ai'?aiSteps:coreSteps;index=0;find('#guide-core').setAttribute('aria-pressed',String(guideMode==='core'));find('#guide-detail').setAttribute('aria-pressed',String(guideMode==='detail'));find('#guide-ai').setAttribute('aria-pressed',String(guideMode==='ai'));find('#tutorial-jump').innerHTML=steps.map((step,i)=>`<option value="${i}">${String(i+1).padStart(2,'0')}. ${step.title}</option>`).join('');if(active)render();}
   find('#tutorial-jump').innerHTML=steps.map((step,i)=>`<option value="${i}">${String(i+1).padStart(2,'0')}. ${step.title}</option>`).join('');
   find('#tutorial-jump').onchange=e=>{index=Number(e.target.value);render();};
   let index = 0, savedView, savedScroll, savedFocus, savedPanel, savedMode, savedTimeMode, savedDetails, savedDrawerScroll, active = false, frame = 0;
@@ -111,7 +122,7 @@ export function initTutorial({ pause, captureView, restoreView, showView }) {
     const step=steps[index];
     if(step.view) showView(...step.view);
     find('.tutorial-art').hidden=!!step.target;
-    find('.tutorial-step').textContent=`${guideMode==='core'?'핵심':'상세'} ${String(index+1).padStart(2,'0')} / ${String(steps.length).padStart(2,'0')}`;
+    find('.tutorial-step').textContent=`${guideMode==='core'?'핵심':guideMode==='ai'?'AI 기능':'상세'} ${String(index+1).padStart(2,'0')} / ${String(steps.length).padStart(2,'0')}`;
     find('#tutorial-title').textContent=step.title;
     find('#tutorial-description').textContent=step.text;
     find('.tutorial-tip').textContent=step.tip;
@@ -183,16 +194,16 @@ export function initTutorial({ pause, captureView, restoreView, showView }) {
   overlay.addEventListener('touchmove',e=>{if(touchY===null||e.touches.length!==1)return;e.preventDefault();const y=e.touches[0].clientY;scrollSurface(e.touches[0].clientX,y).scrollTop+=touchY-y;touchY=y;},{passive:false});
   overlay.addEventListener('touchend',()=>{touchY=null;});
   overlay.addEventListener('touchcancel',()=>{touchY=null;});
-  help.onclick=()=>open('core');launch.onclick=()=>open('core');detailLaunch.onclick=()=>open('detail');find('#guide-core').onclick=()=>setGuideMode('core');find('#guide-detail').onclick=()=>setGuideMode('detail');
+  help.onclick=()=>open('core');launch.onclick=()=>open('core');detailLaunch.onclick=()=>open('detail');aiLaunch.onclick=()=>open('ai');find('#guide-ai').onclick=()=>setGuideMode('ai');find('#guide-core').onclick=()=>setGuideMode('core');find('#guide-detail').onclick=()=>setGuideMode('detail');
   // First visit: show the home screen with a small welcome bar instead of opening the guide.
   let seen=false;try{seen=localStorage.getItem(STORAGE_KEY)==='seen';}catch{}
   let welcomed=false;try{welcomed=localStorage.getItem(WELCOME_KEY)==='done';}catch{}
   if(!seen&&!welcomed){
     launch.classList.add('is-new');
     welcome=document.createElement('section');welcome.className='welcome-banner';welcome.setAttribute('role','region');welcome.setAttribute('aria-label','처음 방문 안내');
-    welcome.innerHTML=`<div class="welcome-text"><strong>처음이신가요?</strong><span>아래 <b>▶ 시뮬레이션 시작</b>을 눌러 바로 하역을 보거나, <b>시작 가이드</b>로 5단계 사용법을 확인하세요.</span></div><div class="welcome-actions"><button type="button" class="welcome-guide">◈ 시작 가이드 보기</button><button type="button" class="welcome-skip">바로 둘러보기</button><button type="button" class="welcome-close" aria-label="안내 닫기">×</button></div>`;
+    welcome.innerHTML=`<div class="welcome-text"><strong>처음이신가요?</strong><span>아래 <b>▶ 시뮬레이션 시작</b>을 눌러 바로 하역을 보거나, <b>시작 가이드</b>로 5단계 사용법을, <b>AI 기능 가이드</b>로 AI 활용법을 확인하세요.</span></div><div class="welcome-actions"><button type="button" class="welcome-guide">◈ 시작 가이드 보기</button><button type="button" class="welcome-ai">✦ AI 기능 가이드</button><button type="button" class="welcome-skip">바로 둘러보기</button><button type="button" class="welcome-close" aria-label="안내 닫기">×</button></div>`;
     document.querySelector('.page-title').after(welcome);
-    welcome.querySelector('.welcome-guide').onclick=()=>open('core');
+    welcome.querySelector('.welcome-guide').onclick=()=>open('core');welcome.querySelector('.welcome-ai').onclick=()=>open('ai');
     welcome.querySelector('.welcome-skip').onclick=dismissWelcome;welcome.querySelector('.welcome-close').onclick=dismissWelcome;
   }
 }
