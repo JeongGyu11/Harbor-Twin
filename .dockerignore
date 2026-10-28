@@ -1,5 +1,6 @@
 *
 !observation_server.py
+!ai_assistant.py
 !dist/
 !dist/**
 !Dockerfile
