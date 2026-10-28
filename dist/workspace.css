@@ -30,3 +30,22 @@ body[data-panel=placement] .workspace-drawer{width:min(790px,calc(100vw - 142px)
 .placement-status{margin:10px 0;padding:10px 14px;border:1px solid #2e7065;border-radius:8px;color:#bfece1;background:#102c2b;font-size:12px;line-height:1.7}.placement-status[hidden]{display:none}
 
 .model-risk{--risk-color:#63e4c0;margin:12px 0;padding:14px 16px;border:1px solid var(--risk-color);border-left:4px solid var(--risk-color);border-radius:10px;background:#11212c;color:#d7e6ec;font-size:12px;line-height:1.65}.risk-heading{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.risk-heading strong{font-size:15px;color:var(--risk-color)}.risk-scope{color:#9db9c6;font-size:11px}.model-risk p{margin:6px 0}.model-risk ul{margin:6px 0;padding-left:20px}.model-risk summary{cursor:pointer;color:#a8c4d0}.model-risk[data-level="3"]{background:#331e2a}#scene{position:relative}#risk-3d{position:absolute;bottom:22px;left:18px;z-index:4;max-width:calc(100% - 36px);padding:9px 13px;border:1px solid var(--risk-color);border-radius:8px;color:var(--risk-color);background:#0a1725ec;font-size:12px;pointer-events:none}#risk-3d[hidden]{display:none}
+/* True fullscreen simulation view */
+#fullscreenToggle{font-size:15px!important}
+.fs-hud{position:absolute;left:16px;right:16px;top:14px;z-index:12;display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 12px;background:#0b1824d9;border:1px solid #2f4757;border-radius:10px;backdrop-filter:blur(6px);color:#e9f1f5;pointer-events:auto}
+.fs-hud[hidden]{display:none}
+.fs-brand{display:flex;flex-direction:column;gap:2px;min-width:130px}.fs-brand strong{font-size:13px;letter-spacing:.5px}.fs-brand span{font-size:11px;color:var(--mint)}.fs-brand span.warn{color:var(--amber)}
+.fs-stats{display:flex;gap:18px;flex-wrap:wrap}.fs-stats div{display:flex;flex-direction:column;gap:1px}.fs-stats small{font-size:10px;color:#90a7b7}.fs-stats b{font-size:16px;font-variant-numeric:tabular-nums}
+.fs-actions{margin-left:auto;display:flex;gap:8px}.fs-actions button{height:34px;padding:0 13px;border:1px solid #3d5869;border-radius:7px;background:#12263a;color:#dce8ee;font-size:13px;cursor:pointer}.fs-actions button:hover{border-color:var(--mint)}
+.fs-actions .fs-primary{background:var(--mint);color:#06231c;border-color:var(--mint);font-weight:700}.fs-actions button:disabled{opacity:.45;cursor:not-allowed}
+#viewBody:fullscreen,#viewBody.pseudo-fullscreen{width:100%;height:100%!important;max-height:none;border-radius:0;background:#08121d}
+#viewBody:-webkit-full-screen{width:100%;height:100%!important}
+#viewBody.pseudo-fullscreen{position:fixed!important;inset:0;z-index:9999;height:100dvh!important}
+html.pseudo-fullscreen-lock,html.pseudo-fullscreen-lock body{overflow:hidden}
+#viewBody:fullscreen #scene,#viewBody:fullscreen #plan,#viewBody.pseudo-fullscreen #scene,#viewBody.pseudo-fullscreen #plan{position:absolute;inset:0;height:auto}
+#viewBody:fullscreen .deck-selector,#viewBody.pseudo-fullscreen .deck-selector{top:92px}
+#viewBody:fullscreen .view-overlay,#viewBody.pseudo-fullscreen .view-overlay{top:92px}
+#viewBody:fullscreen #toast,#viewBody.pseudo-fullscreen #toast{z-index:20}
+@media(max-width:760px){.fs-hud{left:8px;right:8px;top:8px;gap:8px;padding:8px}.fs-stats{gap:10px}.fs-stats b{font-size:13px}.fs-brand{min-width:0}.fs-actions{margin-left:0;width:100%}.fs-actions button{flex:1}#viewBody:fullscreen .deck-selector,#viewBody.pseudo-fullscreen .deck-selector{top:150px}}
+/* Fill the whole view panel (the 3D canvas previously sized itself from its own content). */
+#viewBody>#scene{position:absolute;inset:0}
