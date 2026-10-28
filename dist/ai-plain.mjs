@@ -21,7 +21,8 @@ export function plainText(input){
  for(const [code,word] of TERMS)t=t.replace(new RegExp(`\\b${code}\\b`,'g'),word);
  t=t.replace(/\b[a-z]+(?:[A-Z][a-z0-9]*)+\b/g,'');             // any other camelCase identifier
  t=t.replace(/\b([PS])-([FA])\s*(?:→|->|=>)\s*([PS])-([FA])\b/g,'$1-$2에서 $3-$4로'); // tank arrows
- t=t.replace(/((?:[가-힣]+\s)?[가-힣]*탱크(?:\s?\([PS]-[FA]\))?)\s*(?:→|->|=>)\s*((?:[가-힣]+\s)?[가-힣]*탱크(?:\s?\([PS]-[FA]\))?)/g,'$1에서 $2로'); // named tanks
+ t=t.replace(/((?:[가-힣]+\s){0,2}[가-힣]*탱크(?:\s?\([PS]-[FA]\))?)\s*(?:→|->|=>)\s*((?:[가-힣]+\s){0,2}[가-힣]*탱크(?:\s?\([PS]-[FA]\))?)/g,'$1에서 $2로'); // named tanks
+ t=t.replace(/탱크(\s?\([PS]-[FA]\))?로로/g,'탱크$1로');
  t=t.replace(/\s*(?:→|->|=>)\s*/g,', 그러면 ');                   // other arrows
  t=t.replace(/±\s*/g,'');
  t=t.replace(/(\d)\s*°/g,'$1도');
