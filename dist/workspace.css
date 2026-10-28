@@ -66,3 +66,20 @@ html.pseudo-fullscreen-lock,html.pseudo-fullscreen-lock body{overflow:hidden}
 @media(max-width:620px){.page-title .tutorial-launch{font-size:14px;padding:12px 16px;margin:10px 0 0}.welcome-banner{padding:12px}.welcome-actions{width:100%}.welcome-actions button{white-space:nowrap;font-size:12.5px;padding:0 10px}.welcome-guide,.welcome-skip{flex:1}}
 /* Removed from the UI: header help (?) and in-page expand; the start guide and fullscreen replace them. */
 #help,#expand-simulation{display:none!important}
+/* First-look control hint over the 3D view */
+.view-hint{position:absolute;inset:0;z-index:9;display:flex;align-items:center;justify-content:center;pointer-events:none;opacity:0;transition:opacity .45s ease}
+.view-hint.vh-in{opacity:1}.view-hint.vh-out{opacity:0}
+.vh-card{display:flex;flex-wrap:wrap;justify-content:center;gap:10px 26px;max-width:min(560px,calc(100% - 32px));padding:18px 24px 14px;background:#07131dcc;border:1px solid #ffffff26;border-radius:14px;backdrop-filter:blur(6px);color:#eef6f8;box-shadow:0 14px 40px #0007}
+.vh-item{display:flex;align-items:center;gap:10px}
+.vh-icon{width:40px;height:40px;display:grid;place-items:center;color:var(--mint)}.vh-icon svg{width:38px;height:38px}
+.vh-item b{display:block;font-size:14px;font-weight:700}.vh-item span{display:block;font-size:12px;color:#b6cad3;margin-top:1px}
+.vh-icon .vh-key{display:grid;margin:0;white-space:nowrap;letter-spacing:-1px;place-items:center;min-width:34px;height:34px;padding:0 6px;border:2px solid var(--mint);border-bottom-width:4px;border-radius:8px;font-size:17px;font-weight:800;line-height:1;color:var(--mint);font-family:inherit}
+.vh-foot{flex-basis:100%;margin:6px 0 0;text-align:center;font-size:11.5px;color:#9fb6c1}
+.vh-wheel{animation:vh-wheel 1.4s ease-in-out infinite}
+@keyframes vh-wheel{0%,100%{transform:translateY(0)}50%{transform:translateY(4px)}}
+.vh-item:first-child .vh-icon svg{animation:vh-drag 1.8s ease-in-out infinite}
+@keyframes vh-drag{0%,100%{transform:translateX(-3px)}50%{transform:translateX(3px)}}
+.vh-finger{animation:vh-tap 1.6s ease-in-out infinite;transform-origin:24px 24px}
+@keyframes vh-tap{0%,100%{transform:translateX(-5px)}50%{transform:translateX(5px)}}
+@media(prefers-reduced-motion:reduce){.vh-wheel,.vh-item:first-child .vh-icon svg,.vh-finger{animation:none}}
+@media(max-width:620px){.vh-card{flex-direction:column;align-items:stretch;gap:10px;padding:16px 18px 12px;max-width:calc(100% - 40px)}.vh-item b{font-size:14px}.vh-item span{font-size:12px}.vh-icon,.vh-icon svg{width:34px;height:34px}.vh-icon .vh-key{min-width:30px;height:30px;font-size:15px}}
