@@ -2,6 +2,7 @@
 import os,json,math,datetime,urllib.request,urllib.parse,urllib.error,sqlite3,threading,time,signal,functools,contextlib
 from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
 from pathlib import Path
+import ai_assistant
 KST=datetime.timezone(datetime.timedelta(hours=9))
 PORTS={'busan':(35.05,129.12),'busanNew':(35.04,128.81),'incheon':(37.42,126.5),'ulsan':(35.43,129.43),'gwangyang':(34.9,127.72),'pyeongtaek':(36.97,126.78),'pohang':(36.10,129.45)}
 def distance(a,b):
@@ -355,6 +356,7 @@ class Handler(SimpleHTTPRequestHandler):
     params=urllib.parse.parse_qs(url.query)
     try:result=selected_observations(params.get('port',[''])[0],params.get('time',[''])[0])
     except ValueError as e:status=400;result={'error':str(e)}
+   elif url.path=='/api/ai/status':result=ai_assistant.status()
    elif url.path=='/api/observations/status':result={'configured':bool(get_key()),'collector':'server-background','intervalSeconds':300,'ports':store.status(),'weatherPorts':store.weather_status()}
    elif url.path=='/api/weather/status':result={'collector':'server-background','intervalSeconds':300,'sourceType':'model_forecast','ports':store.weather_status()}
    elif url.path=='/api/weather':
@@ -374,6 +376,32 @@ class Handler(SimpleHTTPRequestHandler):
   self.send_response(status);self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Cache-Control','no-store')
   if origin:self.send_header('Access-Control-Allow-Origin',origin);self.send_header('Vary','Origin')
   self.end_headers();self.wfile.write(json.dumps(result,ensure_ascii=False).encode())
+
+def _origin_ok(handler):
+ origin=handler.headers.get('Origin','')
+ allowed=['http://127.0.0.1:4174','http://localhost:4174','http://127.0.0.1:4175','http://localhost:4175']+[v for v in os.getenv('ALLOWED_ORIGINS','').split(',') if v]
+ same_origin=origin in ['http://'+handler.headers.get('Host',''),'https://'+handler.headers.get('Host','')]
+ return origin,(not origin) or origin in allowed or same_origin
+
+def _do_post(self):
+ url=urllib.parse.urlsplit(self.path)
+ origin,ok=_origin_ok(self)
+ def reply(status,result):
+  self.send_response(status);self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Cache-Control','no-store')
+  if origin:self.send_header('Access-Control-Allow-Origin',origin);self.send_header('Vary','Origin')
+  self.end_headers();self.wfile.write(json.dumps(result,ensure_ascii=False).encode())
+ if url.path!='/api/ai/complete':return reply(404,{'error':'없는 경로'})
+ if not ok:return reply(403,{'error':'허용되지 않은 출처'})
+ try:length=int(self.headers.get('Content-Length','0'))
+ except ValueError:length=0
+ if length<=0 or length>ai_assistant.MAX_BODY:return reply(413,{'error':'요청이 너무 큽니다.'})
+ ip=(self.headers.get('X-Forwarded-For','').split(',')[0].strip() or self.client_address[0])
+ if not ai_assistant.limiter.allow(ip):return reply(429,{'error':'요청이 많습니다. 잠시 후 다시 시도하세요.'})
+ try:body=json.loads(self.rfile.read(length).decode('utf-8'))
+ except Exception:return reply(400,{'error':'잘못된 요청 형식'})
+ status,result=ai_assistant.complete(body if isinstance(body,dict) else {})
+ reply(status,result)
+Handler.do_POST=_do_post
 
 def main():
  root=Path(__file__).resolve().parent

@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 WORKDIR /app
-COPY observation_server.py ./
+COPY observation_server.py ai_assistant.py ./
 COPY dist ./dist
 RUN useradd --create-home appuser && mkdir /data && chown appuser /data
 USER appuser

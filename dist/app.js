@@ -281,9 +281,57 @@ const placementStatus=document.createElement('p');placementStatus.id='placement-
 const riskPanel=document.createElement('section');riskPanel.id='model-risk';riskPanel.className='model-risk';riskPanel.innerHTML='<div class="risk-heading"><strong>현재 모델 위험 상태 · <span id="risk-level"></span></strong><span id="risk-direction"></span></div><p class="risk-scope">가정 모델 기준 · 침몰 확률이나 실제 선박 안전 판정이 아닙니다.</p><p id="risk-values"></p><ul id="risk-causes"></ul><p id="risk-guidance" role="status"></p><details><summary>판정 기준 보기</summary><p>기울기 한도 80%부터 주의, 초과 시 기준 초과. GM 0.20–0.50m는 가정 주의 구간, 0.20m 이하는 계산 범위 밖. 탱크 80–1120t은 가정 운전 범위이며 용량 0–1200t을 벗어나거나 계산값이 유효하지 않으면 중지합니다. 기준 초과만으로 침몰을 판정하거나 자동 중지하지 않습니다. 3D 하역 기울기는 8배 확대 연출입니다.</p></details>';document.querySelector('.stage-toolbar').after(riskPanel);const riskOverlay=document.createElement('div');riskOverlay.id='risk-3d';riskOverlay.hidden=true;$('#scene').append(riskOverlay);
 let previous=performance.now(),updateAccum=0;function frame(now){const dt=Math.min((now-previous)/1000,.1);previous=now;updateAccum+=dt;if(updateAccum>(!config.environment&&config.wave==='off'?.15:.025)){advance(updateAccum);updateAccum=0}if(renderer&&state.view==='3d'){ocean?.update(state.time,config.environment??config.wave);applyWeather();applyOceanPose();if(grid)grid.visible=!config.environment&&config.wave==='off';oceanDecor.forEach(o=>o.visible=!config.environment&&config.wave==='off');const fit=Math.min(2.2,Math.max(1,1.2/camera.aspect)),d=distance*fit;camera.position.set(Math.cos(yaw)*Math.cos(pitch)*d,Math.sin(pitch)*d,Math.sin(yaw)*Math.cos(pitch)*d);camera.lookAt(0,5,0);renderer.render(scene,camera)}requestAnimationFrame(frame)}initDecisionUI();const environmentUI=initEnvironment({apply:environment=>{if(environment)environment.windVisualSettings=windResponse(environment.wind);if(environment?.observation&&!environment.selectedObservations&&config.environment?.weatherData&&environment.weather===config.environment.weather){environment.weatherData=config.environment.weatherData;environment.weatherSource=config.environment.weatherSource??(config.environment.forecast?'Open-Meteo 모델 예보':'기존 설정');environment.isDay=config.environment.isDay;environment.source='기상청 해양 관측 / 기존 날씨 조건 유지';}config.environment=environment;invalidateComparison();reset();}});reset();if(!webgl)setView('2d');requestAnimationFrame(frame);
 initPlacementLab({applyMain:applyPlacement,pause:()=>{state.running=false;update();},getSnapshot:()=>({slots:cargo.map(c=>({...c,loaded:!state.removed.includes(c.id)})),levels:[...state.tanks],km:referenceKM,simulationTime:state.time,environment:config.environment??null,wave:config.wave,threshold:config.threshold})});
+// AI assistant hooks: compact state for the LLM and a side-effect-free what-if run of the physics model.
+const r2=v=>Number.isFinite(v)?Math.round(v*100)/100:null;
+function aiContext(){
+ const m=metrics(),risk=currentRisk(),env=config.environment,instant=Decision.observedHeel(m.heel,state.time,config.wave,config.environment);
+ const next=state.queue.filter(id=>!state.removed.includes(id)).slice(0,4).map(id=>{const c=cargo.find(v=>v.id===id);return {id,side:c.z<0?'좌현':c.z>0?'우현':'중앙',weightT:c.weight,bay:c.bay+1,tier:c.tier+1};});
+ let forecast=null;try{if(m.valid){const f=Decision.forecast(mainModel(),{...decisionInput(),transfer:null},config);if(f.valid)forecast={note:'현재 수위 유지 시 60초 하역 기울기',peakDeg:r2(f.peak),finalDeg:r2(f.final),secondsOverThreshold:f.exceed};}}catch{}
+ const r=recommendation,tr=state.transfer;
+ return {
+  signConvention:'기울기 음수=좌현, 양수=우현',heelDeg:r2(m.heel),instantHeelWithWavesDeg:r2(instant),gmM:r2(m.gm),thresholdDeg:config.threshold,unloadIntervalS:config.interval,pumpRateTps:config.rate,
+  unloading:{done:state.removed.length-initialRemoved.length,total:initialCount(),running:state.running,elapsed:fmtTime(state.time-initialTime)},
+  tanks:tanks.map((t,i)=>({id:t.id,name:t.name,tonnes:Math.round(state.tanks[i]),capacity:1200,operatingRange:'80-1120'})),
+  nextUnload:next,
+  recommendation:r?{from:tanks[r.from].id,to:tanks[r.to].id,amountT:Math.round(r.amount),predictedHeelDeg:r2(r.predicted),durationS:Math.ceil(r.duration),basis:r.settling?'하역 후 잔여 기울기 보정':r.predictive?'60초 예측 후보 비교':'현재 상태 규칙'}:null,
+  transferInProgress:tr?{from:tanks[tr.from].id,to:tanks[tr.to].id,remainingT:Math.round(tr.remaining)}:null,
+  forecast60s:forecast,
+  risk:{level:risk.label,severity:risk.severity,direction:risk.direction,reasons:risk.reasons.map(x=>x.text),guidance:risk.guidance},
+  environment:env?{source:env.source,weather:env.weather,windMps:env.wind,windFromDeg:env.windDirection,waveHeightM:env.height,wavePeriodS:env.period,waveFromDeg:env.direction,shipHeadingDeg:env.heading}:{source:'합성 파도',wave:Decision.WAVES[config.wave??'off'].label}
+ };
+}
+function aiWhatIf(p={}){
+ const num=(v,min,max)=>v===undefined||v===null||v===''||!Number.isFinite(+v)?undefined:Math.min(max,Math.max(min,+v));
+ const changes={wind:num(p.wind_speed,0,113.2),windDirection:num(p.wind_direction,0,360),height:num(p.wave_height,0,15),period:num(p.wave_period,2,25),direction:num(p.wave_direction,0,360)};
+ const envChanged=Object.values(changes).some(v=>v!==undefined);
+ // Without an applied environment: keep the current synthetic wave as an equivalent beam sea
+ // (amplitude ≈ 0.35 × height) and assume the worst case (beam) for unspecified directions.
+ const synthetic=Decision.WAVES[config.wave??'off']?.amplitude??0;
+ const base=config.environment??{source:'가상 조건',weather:'clear',wind:0,windDirection:90,height:synthetic/.35,period:8,direction:90,heading:0};
+ const assumed=[];if(!config.environment&&envChanged){if(changes.wind!==undefined&&changes.windDirection===undefined)assumed.push('바람');if(changes.direction===undefined)assumed.push('파도');}
+ const environment=envChanged?{...base,...Object.fromEntries(Object.entries(changes).filter(([,v])=>v!==undefined))}:config.environment;
+ const cfg={...config,environment,interval:num(p.unload_interval,5,120)??config.interval,threshold:num(p.threshold,.1,10)??config.threshold,horizon:Math.round((num(p.horizon,20,180)??60)/2)*2};
+ const model=mainModel(),input={...decisionInput(),transfer:null};
+ const peakWithWaves=f=>Math.max(0,...f.points.map(pt=>Math.abs(pt.heel+Decision.waveAt(state.time+pt.time,cfg.wave,cfg.environment))));
+ const sum=f=>f.valid?{peakHeelDeg:r2(f.peak),finalHeelDeg:r2(f.final),peakWithWavesDeg:r2(peakWithWaves(f)),secondsOverThreshold:f.exceed,movedT:r2(f.moved)}:{valid:false,note:'추정 GM이 계산 범위 밖'};
+ if(!metrics().valid)return {error:'현재 상태가 계산 범위 밖이라 예측할 수 없습니다.'};
+ const hold=Decision.forecast(model,input,cfg);
+ let evaluated=null;
+ if(p.transfer_from&&p.transfer_to){const from=tanks.findIndex(t=>t.id===p.transfer_from),to=tanks.findIndex(t=>t.id===p.transfer_to),amount=num(p.transfer_amount,1,1040);
+  if(from<0||to<0||from===to||!amount)evaluated={error:'이송 탱크 또는 이송량이 올바르지 않습니다.'};
+  else{const limited=Math.min(amount,state.tanks[from]-80,1120-state.tanks[to]);const action={from,to,amount:Math.max(0,limited),rate:cfg.rate,duration:Math.max(0,limited)/cfg.rate,predictive:true};evaluated={transfer:`${p.transfer_from} → ${p.transfer_to} ${Math.round(action.amount)}t`,limitedByTankRange:limited<amount,...sum(Decision.forecast(model,input,cfg,action))};}}
+ const d=Decision.choose(model,input,cfg),best=d.action?{transfer:`${tanks[d.action.from].id} → ${tanks[d.action.to].id} ${Math.round(d.action.amount)}t`,durationS:Math.ceil(d.action.duration),...sum(Decision.forecast(model,input,cfg,d.action))}:null;
+ const worst=(best??sum(hold));const over=Number.isFinite(worst.peakWithWavesDeg)&&worst.peakWithWavesDeg>cfg.threshold;
+ return {conditions:{windMps:environment?.wind??null,windFromDeg:environment?.windDirection??null,waveHeightM:environment?.height??null,wavePeriodS:environment?.period??null,waveFromDeg:environment?.direction??null,unloadIntervalS:cfg.interval,thresholdDeg:cfg.threshold,horizonS:cfg.horizon,changedFromCurrent:Object.keys(p)},
+  withoutTransfer:sum(hold),evaluatedTransfer:evaluated,bestTransferByModel:best,
+  modelVerdict:over?'추천 이송을 해도 파도를 합친 순간 기울기가 시연 한도를 넘습니다. 하역 일시 중지·하역 간격 확대를 검토하세요.':best?'추천 이송을 적용하면 예측 구간에서 시연 한도 안입니다.':'이송 없이도 예측 구간에서 시연 한도 안입니다.',
+  note:'가정 물리 모델의 가상 계산이며 화면의 시뮬레이션은 바뀌지 않았습니다.'+(assumed.length?` ${assumed.join('·')} 방향을 지정하지 않아 가장 불리한 측면(정횡) 방향을 가정했습니다.`:'')+(!config.environment&&envChanged&&changes.height===undefined&&synthetic?` 파고는 현재 합성 파도(${Decision.WAVES[config.wave].label})에 해당하는 ${r2(synthetic/.35)}m로 두었습니다.`:'')};
+}
 // Read-only snapshot for QA and external prototype inspection.
-window.harborTwin={setCamera:(y=yaw,p=pitch,d=distance)=>{yaw=y;pitch=Math.max(.04,Math.min(1.25,p));distance=Math.max(90,Math.min(300,d));},snapshot:()=>({phase:complete()?'complete':state.transfer?'transfer':recommendation?'approval':'unloading',notice:state.notice,applied:state.applied,transferred:state.transferred,running:state.running,time:state.time,removed:state.removed.length,initialRemoved:[...initialRemoved],initialCount:initialCount(),initialTime,cargo:cargo.map(c=>({...c,loaded:!state.removed.includes(c.id)})),tanks:[...state.tanks],metrics:metrics(),baseline:metrics(false),config:{...config},wave:Decision.waveAt(state.time,config.wave,config.environment),instantHeel:Decision.observedHeel(metrics().heel,state.time,config.wave,config.environment),strategy,events:[...state.events],recommendation,transfer:state.transfer,history:[...state.history],risk:currentRisk(),view:state.view,deck:state.deck})};
+window.harborTwin={aiContext,aiWhatIf,setCamera:(y=yaw,p=pitch,d=distance)=>{yaw=y;pitch=Math.max(.04,Math.min(1.25,p));distance=Math.max(90,Math.min(300,d));},snapshot:()=>({phase:complete()?'complete':state.transfer?'transfer':recommendation?'approval':'unloading',notice:state.notice,applied:state.applied,transferred:state.transferred,running:state.running,time:state.time,removed:state.removed.length,initialRemoved:[...initialRemoved],initialCount:initialCount(),initialTime,cargo:cargo.map(c=>({...c,loaded:!state.removed.includes(c.id)})),tanks:[...state.tanks],metrics:metrics(),baseline:metrics(false),config:{...config},wave:Decision.waveAt(state.time,config.wave,config.environment),instantHeel:Decision.observedHeel(metrics().heel,state.time,config.wave,config.environment),strategy,events:[...state.events],recommendation,transfer:state.transfer,history:[...state.history],risk:currentRisk(),view:state.view,deck:state.deck})};
 import { initTutorial } from './tutorial.js?v=home2';
+import { initAssistant } from './ai-assistant.js?v=ai1';
+initAssistant();
 initTutorial({
   pause:()=>{state.running=false;update();},
   captureView:()=>({view:state.view,deck:state.deck}),
