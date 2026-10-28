@@ -181,6 +181,7 @@ def status():
     return {'configured': bool(key or gkey), 'keyName': name, 'models': list(models()) if key else [],
             'fallback': {'provider': 'gemini', 'configured': bool(gkey), 'keyName': gname, 'models': list(gemini_models()) if gkey else [],
                          'temporarilyUnusable': _unusable.get('gemini', 0) > time.time()},
+            'groqQuota': _quota,
             'roles': list(PROMPTS)}
 
 def _flatten_tools(messages):
@@ -218,6 +219,14 @@ def _clean_messages(raw):
     return out
 
 _unusable = {}
+_quota = {}  # model -> latest Groq rate-limit headers (remaining requests per day, tokens per minute)
+
+def _note_quota(provider, model, headers):
+    if provider != 'groq' or not headers:
+        return
+    q = {k[len('x-ratelimit-'):]: v for k, v in headers.items() if k.lower().startswith('x-ratelimit-')}
+    if q:
+        _quota[model] = {**{k.lower(): v for k, v in q.items()}, 'seenAt': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}
 
 def complete(body):
     """Returns (status, payload)."""
@@ -265,6 +274,7 @@ def complete(body):
             try:
                 with urllib.request.urlopen(req, timeout=40) as r:
                     data = json.loads(r.read(400_000))
+                    _note_quota(provider, model, r.headers)
                 choice = (data.get('choices') or [{}])[0].get('message', {})
                 calls = [{'id': c.get('id'), 'type': 'function', 'function': {'name': c['function']['name'], 'arguments': c['function'].get('arguments') or '{}'}}
                          for c in (choice.get('tool_calls') or []) if c.get('function', {}).get('name') == 'simulate_what_if']
@@ -276,6 +286,7 @@ def complete(body):
                 return 200, {'content': content, 'tool_calls': calls, 'model': model, 'provider': provider, 'skipped': [m for m, _ in skipped]}
             except urllib.error.HTTPError as e:
                 detail = e.read(2000).decode('utf-8', 'replace')
+                _note_quota(provider, model, e.headers)
                 last_error = (e.code, detail)
                 print(f'[ai] {model} HTTP {e.code} (attempt {attempt}): {detail[:300]}', flush=True)
                 if e.code in (400, 403, 404) and ('model' in detail.lower() or 'decommission' in detail.lower()):
