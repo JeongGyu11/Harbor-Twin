@@ -1,4 +1,4 @@
-"""Groq LLM proxy for the ballast-adjustment assistant.
+"""LLM proxy (Groq first, Gemini as fallback) for the ballast-adjustment assistant.
 
 The browser never sees the API key. Prompts live here so the endpoint only serves the
 three assistant roles (briefing, risk guidance, chat with what-if simulation tool).
@@ -6,13 +6,16 @@ Numbers always come from the physics model in the browser; the LLM explains them
 """
 import os, json, time, threading, urllib.request, urllib.error
 
-GROQ_URL = os.getenv('GROQ_BASE_URL', 'https://api.groq.com/openai/v1').rstrip('/') + '/chat/completions'
+GROQ_BASE = os.getenv('GROQ_BASE_URL', 'https://api.groq.com/openai/v1').rstrip('/')
+GEMINI_BASE = os.getenv('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta/openai').rstrip('/')
 KEY_NAMES = ('GROQ_API_KEY', 'GROQ_KEY', 'GROQ_API', 'GROQ_TOKEN', 'GROQ_APIKEY')
+GEMINI_KEY_NAMES = ('GEMINI_API_KEY', 'GEMINI_KEY', 'GOOGLE_API_KEY', 'GOOGLE_AI_KEY', 'GEMINI_API')
 DEFAULT_MODELS = ('openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile')
+GEMINI_PREFERRED = ('gemini-3.8-flash', 'gemini-3-flash', 'gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash')
 MAX_BODY = 60_000
 
-def api_key():
-    for name in KEY_NAMES:
+def _env_key(names):
+    for name in names:
         value = os.getenv(name, '').strip()
         if value:
             return value, name
@@ -22,15 +25,57 @@ def api_key():
         with open(path, encoding='utf-8-sig') as f:
             for line in f:
                 name, _, value = line.strip().partition('=')
-                if name in KEY_NAMES and value.strip().strip('"').strip("'"):
+                if name in names and value.strip().strip('"').strip("'"):
                     return value.strip().strip('"').strip("'"), name
     except OSError:
         pass
     return '', None
 
+def api_key():
+    return _env_key(KEY_NAMES)
+
+def gemini_key():
+    return _env_key(GEMINI_KEY_NAMES)
+
 def models():
     preferred = os.getenv('GROQ_MODEL', '').strip()
     return ((preferred,) if preferred else ()) + tuple(m for m in DEFAULT_MODELS if m != preferred)
+
+_gemini_models = {'at': 0, 'list': ()}
+def gemini_models():
+    """Gemini model names change often: ask the API once an hour and pick a text 'flash' model."""
+    override = os.getenv('GEMINI_MODEL', '').strip()
+    if override:
+        return (override,)
+    key, _ = gemini_key()
+    if not key:
+        return ()
+    if time.time() - _gemini_models['at'] < 3600 and _gemini_models['list']:
+        return _gemini_models['list']
+    found = []
+    try:
+        req = urllib.request.Request(GEMINI_BASE + '/models', headers={'Authorization': 'Bearer ' + key})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read(400_000))
+        found = [str(m.get('id', '')).replace('models/', '') for m in data.get('data', [])]
+    except Exception as e:
+        print(f'[ai] gemini model list failed: {e}', flush=True)
+    bad = ('image', 'tts', 'embedding', 'live', 'audio', 'vision', 'robotics', 'computer', 'native', 'thinking', 'exp', 'learnlm', 'gemma', 'veo', 'imagen', 'omni')
+    usable = [m for m in found if m.startswith('gemini') and 'flash' in m and not any(b in m for b in bad)]
+    ordered = [m for m in GEMINI_PREFERRED if m in usable] + sorted((m for m in usable if m not in GEMINI_PREFERRED and 'lite' not in m), reverse=True) + sorted((m for m in usable if 'lite' in m), reverse=True)
+    result = tuple(ordered[:3]) or GEMINI_PREFERRED[:3]
+    _gemini_models.update(at=time.time(), list=result)
+    return result
+
+def providers():
+    out = []
+    key, _ = api_key()
+    if key:
+        out += [('groq', GROQ_BASE, key, m) for m in models()]
+    gkey, _ = gemini_key()
+    if gkey:
+        out += [('gemini', GEMINI_BASE, gkey, m) for m in gemini_models()]
+    return out
 
 BASE = (
     "당신은 'HARBOR TWIN'의 AI 평형수 조정 보조원 '하버'입니다. 사용자는 항구에 정박해 컨테이너를 하역하는 "
@@ -131,7 +176,24 @@ def _retry_after(err, detail):
 
 def status():
     key, name = api_key()
-    return {'configured': bool(key), 'keyName': name, 'models': list(models()), 'roles': list(PROMPTS)}
+    gkey, gname = gemini_key()
+    return {'configured': bool(key or gkey), 'keyName': name, 'models': list(models()) if key else [],
+            'fallback': {'provider': 'gemini', 'configured': bool(gkey), 'keyName': gname, 'models': list(gemini_models()) if gkey else []},
+            'roles': list(PROMPTS)}
+
+def _flatten_tools(messages):
+    """For providers that need provider-specific tool-call state (Gemini thought signatures),
+    turn earlier tool exchanges into plain text so any conversation can continue."""
+    out = []
+    for m in messages:
+        if m['role'] == 'assistant' and m.get('tool_calls'):
+            asked = '; '.join(c['function']['arguments'] for c in m['tool_calls'])
+            out.append({'role': 'assistant', 'content': (m.get('content') or '') + f'(가상 시뮬레이션을 실행했습니다: {asked})'})
+        elif m['role'] == 'tool':
+            out.append({'role': 'user', 'content': '[가상 시뮬레이션 결과 JSON — 사용자에게 쉬운 말로 설명하세요]\n' + m['content']})
+        else:
+            out.append(m)
+    return out
 
 def _clean_messages(raw):
     out = []
@@ -155,8 +217,8 @@ def _clean_messages(raw):
 
 def complete(body):
     """Returns (status, payload)."""
-    key, _ = api_key()
-    if not key:
+    attempts = providers()
+    if not attempts:
         return 503, {'error': 'AI 키가 서버에 설정되지 않았습니다.', 'configured': False}
     role = body.get('role')
     if role not in PROMPTS:
@@ -176,13 +238,18 @@ def complete(body):
     last_error = None
     skipped = []
     busy_wait = []
-    for model in models():
+    for provider, base, key, model in attempts:
         body_out = {**payload, 'model': model}
-        if model.startswith('openai/gpt-oss'):
+        if provider == 'groq' and model.startswith('openai/gpt-oss'):
             body_out['reasoning_effort'] = 'low'
             body_out['max_tokens'] = payload['max_tokens'] + 300  # room for short reasoning, kept small: Groq counts it toward TPM
+        if provider == 'gemini':
+            body_out['messages'] = _flatten_tools(payload['messages'])
+            body_out.pop('top_p', None)
+            body_out['reasoning_effort'] = 'low'
+            body_out['max_tokens'] = payload['max_tokens'] + 1400  # Gemini counts thinking inside the output budget
         for attempt in (1, 2):
-            req = urllib.request.Request(GROQ_URL, data=json.dumps(body_out, ensure_ascii=False, separators=(',', ':')).encode(),
+            req = urllib.request.Request(base + '/chat/completions', data=json.dumps(body_out, ensure_ascii=False, separators=(',', ':')).encode(),
                                          headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json',
                                                   'User-Agent': 'harbor-twin/1.0'}, method='POST')
             try:
@@ -196,7 +263,7 @@ def complete(body):
                     skipped.append((model, 'empty'))
                     print(f'[ai] empty answer from {model}: finish={((data.get("choices") or [{}])[0]).get("finish_reason")}', flush=True)
                     break
-                return 200, {'content': content, 'tool_calls': calls, 'model': model, 'skipped': [m for m, _ in skipped]}
+                return 200, {'content': content, 'tool_calls': calls, 'model': model, 'provider': provider, 'skipped': [m for m, _ in skipped]}
             except urllib.error.HTTPError as e:
                 detail = e.read(2000).decode('utf-8', 'replace')
                 last_error = (e.code, detail)
@@ -204,20 +271,28 @@ def complete(body):
                 if e.code in (400, 403, 404) and ('model' in detail.lower() or 'decommission' in detail.lower()):
                     skipped.append((model, e.code))
                     break  # model unavailable: try the next one
-                if e.code == 401:
-                    return 502, {'error': 'AI 키가 올바르지 않습니다. Render 환경변수를 확인하세요.'}
+                if e.code in (401, 403) or (e.code == 400 and 'api key' in detail.lower()):
+                    skipped.append((model, e.code))
+                    print(f'[ai] {provider} key rejected; trying next provider', flush=True)
+                    break
                 if e.code == 429:
                     wait = _retry_after(e, detail)
                     busy_wait.append(wait)
-                    if attempt == 1 and wait <= 8:
+                    # Only wait on the last provider; otherwise hand over to the fallback right away.
+                    if attempt == 1 and wait <= 8 and provider == attempts[-1][0]:
                         time.sleep(wait + 0.3)  # per-minute limit frees up within seconds
                         continue
                     skipped.append((model, 429))
                     break  # each model has its own limit: try the next one
+                if e.code >= 500 or provider == 'groq':
+                    skipped.append((model, e.code))
+                    break  # provider trouble: let the next provider answer
                 return 502, {'error': f'AI 응답 오류({e.code})'}
             except Exception as e:  # network/timeout
                 last_error = (0, str(e))
-                return 504, {'error': 'AI 서버에 연결하지 못했습니다. 잠시 후 다시 시도하세요.'}
+                print(f'[ai] {provider}/{model} network error: {e}', flush=True)
+                skipped.append((model, 'net'))
+                break
     if busy_wait:
         secs = max(3, min(60, round(min(busy_wait))))
         return 429, {'error': f'지금 AI 사용이 몰려 잠시 쉬고 있어요. {secs}초 뒤 자동으로 다시 시도할게요.', 'retryAfter': secs}
