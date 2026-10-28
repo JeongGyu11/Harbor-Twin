@@ -281,7 +281,7 @@ def complete(body):
                 if e.code in (400, 403, 404) and ('model' in detail.lower() or 'decommission' in detail.lower()):
                     skipped.append((model, e.code))
                     break  # model unavailable: try the next one
-                if e.code in (401, 402, 403) or (e.code == 400 and 'api key' in detail.lower()) or 'credits are depleted' in detail or 'billing' in detail.lower():
+                if e.code != 429 and (e.code in (401, 402, 403) or (e.code == 400 and 'api key' in detail.lower()) or 'credits are depleted' in detail or 'billing' in detail.lower()):
                     print(f'[ai] {provider} unusable (key/billing {e.code}); skipping this provider', flush=True)
                     dead.add(provider)
                     _unusable[provider] = time.time() + 600  # re-check after 10 minutes (e.g. credits added)
