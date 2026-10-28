@@ -11,7 +11,8 @@ GEMINI_BASE = os.getenv('GEMINI_BASE_URL', 'https://generativelanguage.googleapi
 KEY_NAMES = ('GROQ_API_KEY', 'GROQ_KEY', 'GROQ_API', 'GROQ_TOKEN', 'GROQ_APIKEY')
 GEMINI_KEY_NAMES = ('GEMINI_API_KEY', 'GEMINI_KEY', 'GOOGLE_API_KEY', 'GOOGLE_AI_KEY', 'GEMINI_API')
 DEFAULT_MODELS = ('openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile')
-GEMINI_PREFERRED = ('gemini-3.8-flash', 'gemini-3-flash', 'gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash')
+# Free tier: Flash-Lite has far more daily requests than Flash, so it goes first.
+GEMINI_PREFERRED = ('gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.8-flash', 'gemini-3-flash', 'gemini-flash-latest', 'gemini-2.5-flash')
 MAX_BODY = 60_000
 
 def _env_key(names):
@@ -62,7 +63,7 @@ def gemini_models():
         print(f'[ai] gemini model list failed: {e}', flush=True)
     bad = ('image', 'tts', 'embedding', 'live', 'audio', 'vision', 'robotics', 'computer', 'native', 'thinking', 'exp', 'learnlm', 'gemma', 'veo', 'imagen', 'omni')
     usable = [m for m in found if m.startswith('gemini') and 'flash' in m and not any(b in m for b in bad)]
-    ordered = [m for m in GEMINI_PREFERRED if m in usable] + sorted((m for m in usable if m not in GEMINI_PREFERRED and 'lite' not in m), reverse=True) + sorted((m for m in usable if 'lite' in m), reverse=True)
+    ordered = [m for m in GEMINI_PREFERRED if m in usable] + sorted((m for m in usable if m not in GEMINI_PREFERRED and 'lite' in m), reverse=True) + sorted((m for m in usable if m not in GEMINI_PREFERRED and 'lite' not in m), reverse=True)
     result = tuple(ordered[:3]) or GEMINI_PREFERRED[:3]
     _gemini_models.update(at=time.time(), list=result)
     return result
