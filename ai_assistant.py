@@ -157,7 +157,7 @@ def complete(body):
             return 400, {'error': '질문을 입력하세요.'}
     else:
         messages.append({'role': 'user', 'content': '위 상태로 작성해 주세요.'})
-    payload = {'messages': messages, 'temperature': 0.3, 'max_tokens': 700 if role == 'chat' else 420}
+    payload = {'messages': messages, 'temperature': 0.15, 'top_p': 0.9, 'max_tokens': 700 if role == 'chat' else 420}
     if role == 'chat':
         payload['tools'] = TOOLS
         payload['tool_choice'] = 'auto'

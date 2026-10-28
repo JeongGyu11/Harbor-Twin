@@ -1,10 +1,11 @@
 // AI 평형수 조정 보조 (Groq LLM via our server). Numbers come from the physics model;
 // the LLM only explains, guides and answers. Three surfaces:
 //  ① briefing card in the 균형 조정 panel  ⑥ response card in the risk panel  ② ship mascot chat.
+import {plainText} from './ai-plain.mjs?v=plain1';
 const $=s=>document.querySelector(s);
 const API=(['localhost','127.0.0.1'].includes(location.hostname)&&location.port==='4174'?'http://127.0.0.1:4175':'')+'/api/ai';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const fmt=s=>esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
+const fmt=s=>esc(plainText(s)).replace(/\n/g,'<br>');
 const twin=()=>window.harborTwin;
 
 let status={configured:null};
@@ -123,7 +124,7 @@ function initChat(){
   }catch(e){if(mine!==session)return;wait.classList.remove('pending');wait.classList.add('error');wait.textContent=e.message;history.pop();}
   finally{if(mine===session){busy=false;send.disabled=false;log.scrollTop=log.scrollHeight;input.focus();}}
  };
- const describe=a=>{const p=[];if(a.wind_speed!==undefined)p.push(`풍속 ${a.wind_speed}m/s`);if(a.wind_direction!==undefined)p.push(`풍향 ${a.wind_direction}°`);if(a.wave_height!==undefined)p.push(`파고 ${a.wave_height}m`);if(a.wave_period!==undefined)p.push(`주기 ${a.wave_period}초`);if(a.unload_interval!==undefined)p.push(`하역 간격 ${a.unload_interval}초`);if(a.transfer_from)p.push(`${a.transfer_from}→${a.transfer_to} ${a.transfer_amount??''}t`);if(a.horizon)p.push(`${a.horizon}초 예측`);return p.join(' · ')||'현재 조건';};
+ const describe=a=>{const p=[];if(a.wind_speed!==undefined)p.push(`풍속 ${a.wind_speed}m/s`);if(a.wind_direction!==undefined)p.push(`풍향 ${a.wind_direction}°`);if(a.wave_height!==undefined)p.push(`파고 ${a.wave_height}m`);if(a.wave_period!==undefined)p.push(`주기 ${a.wave_period}초`);if(a.unload_interval!==undefined)p.push(`하역 간격 ${a.unload_interval}초`);if(a.transfer_from)p.push(`${a.transfer_from}에서 ${a.transfer_to}로 ${a.transfer_amount??''}톤 옮기기`);if(a.horizon)p.push(`${a.horizon}초 예측`);return p.join(' · ')||'현재 조건';};
  form.onsubmit=e=>{e.preventDefault();submit();};
  input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();submit();}});
  input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,96)+'px';});
