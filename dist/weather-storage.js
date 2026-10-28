@@ -1,6 +1,6 @@
 export function initStoredWeather({onApply}){
  const $=s=>document.querySelector(s),labels={clear:'맑음',cloud:'흐림',rain:'비',fog:'안개',snow:'눈'};
- const base=['localhost','127.0.0.1'].includes(location.hostname)&&location.port==='4174'?'http://127.0.0.1:4175':'';
+ const base=['localhost','127.0.0.1'].includes(location.hostname)?(location.port==='4174'?'http://127.0.0.1:4175':''):'https://harbor-twin-server.onrender.com';
  let pending=null,busy=false,epoch=0;
  async function load(){if(busy)return;busy=true;const port=$('#env-location').value,token=epoch;$('#weather-fetch').disabled=true;
  try{const response=await fetch(base+'/api/environment/latest?port='+encodeURIComponent(port),{cache:'no-store',signal:AbortSignal.timeout(15000)});const data=await response.json();if(token!==epoch)return;if(!response.ok||data.error)throw Error(data.error||'날씨 저장값 조회 실패');pending=data;

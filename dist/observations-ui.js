@@ -1,6 +1,6 @@
 export function initObservations({read,apply}){
  const $=s=>document.querySelector(s);let pending=null,busy=false,lastPoll=0;
- const base=['localhost','127.0.0.1'].includes(location.hostname)&&location.port==='4174'?'http://127.0.0.1:4175':'';
+ const base=['localhost','127.0.0.1'].includes(location.hostname)?(location.port==='4174'?'http://127.0.0.1:4175':''):'https://harbor-twin-server.onrender.com';
  async function load(){if(busy)return;busy=true;$('#obs-fetch').disabled=true;const port=$('#env-location').value;pending=null;$('#obs-apply').disabled=true;
   try{
    $('#obs-status').textContent='서버에 저장된 최신 관측 조회 중…';

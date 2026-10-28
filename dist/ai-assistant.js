@@ -4,26 +4,28 @@
 //  ⑤ manifest → unloading plan converter  ⑥ risk response card.
 import {plainText} from './ai-plain.mjs?v=plain4';
 const $=s=>document.querySelector(s);
-const ROOT=(['localhost','127.0.0.1'].includes(location.hostname)&&location.port==='4174'?'http://127.0.0.1:4175':'')+'/api';
+const ROOT=(['localhost','127.0.0.1'].includes(location.hostname)?(location.port==='4174'?'http://127.0.0.1:4175':''):'https://harbor-twin-server.onrender.com')+'/api';
 const API=ROOT+'/ai';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt=s=>esc(plainText(s)).replace(/\n/g,'<br>');
 const twin=()=>window.harborTwin;
 
 let status={configured:null},coolUntil=0;
-const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const sleep=(ms,signal)=>new Promise((resolve,reject)=>{if(signal?.aborted)return reject(new DOMException('취소됨','AbortError'));const stop=()=>{clearTimeout(t);reject(new DOMException('취소됨','AbortError'));};const t=setTimeout(()=>{signal?.removeEventListener('abort',stop);resolve();},ms);signal?.addEventListener('abort',stop,{once:true});});
 export const aiCoolingDown=()=>Date.now()<coolUntil;
-// One automatic retry when Groq's per-minute token limit is hit; onWait shows the countdown.
-async function ask(role,extra={},{onWait}={},retried=false){
- const context=twin()?.aiContext?.()??{};
- const r=await fetch(API+'/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role,context,...extra})});
- let data={};try{data=await r.json();}catch{}
- if(r.status===429){
-  const secs=Math.max(3,Math.min(60,Number(data.retryAfter)||10));coolUntil=Date.now()+secs*1000;
-  if(!retried&&secs<=30){for(let left=secs;left>0;left--){onWait?.(left);await sleep(1000);}return ask(role,extra,{onWait},true);}
- }
+const stateKey=()=>{const c=twin()?.aiContext?.();return JSON.stringify([c?.environment,c?.unloading?.containersUnloaded,c?.recommendation,c?.transferInProgress]);};
+const replyHtml=d=>`<p class="ai-source">생성 당시 판정: <strong>${esc(d.assessmentLabel??'자료 부족 · 판정 보류')}</strong> · ${esc(d.generatedAt?new Date(d.generatedAt).toLocaleTimeString('ko-KR',{timeZone:'Asia/Seoul'}):'시각 미확인')} KST</p>${d.stale?'<p class="ai-error">요청 후 조건 또는 작업 상태가 바뀌었습니다. 이 설명은 생성 당시 기록입니다. 다시 생성하세요.</p>':''}${d.guarded?'<p class="ai-muted">AI 문장의 수치·표현 검증으로 원본 표를 안내하는 고정 설명을 표시합니다.</p>':''}<p>${fmt(d.content??'응답 내용이 없습니다.')}</p>`;
+async function ask(role,extra={},{onWait,signal}={},retried=false){
+ const context=twin()?.aiContext?.()??{},captured=stateKey(),controller=new AbortController();
+ const cancel=()=>controller.abort();if(signal?.aborted)controller.abort();else signal?.addEventListener('abort',cancel,{once:true});
+ const timer=setTimeout(()=>controller.abort(),45000);let r,data={};
+ try{r=await fetch(API+'/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role,context,...extra}),signal:controller.signal});try{data=await r.json();}catch{}}
+ catch(e){if(e.name==='AbortError'){if(signal?.aborted)throw e;throw Error('AI 응답 시간 초과 · 시뮬레이션은 유지됩니다. 다시 요청하세요.');}throw e;}
+ finally{clearTimeout(timer);signal?.removeEventListener('abort',cancel);}
+ if(r.status===429){const secs=Math.max(3,Math.min(60,Number(data.retryAfter)||10));coolUntil=Date.now()+secs*1000;
+  if(!retried&&secs<=15){for(let left=secs;left>0;left--){onWait?.(left);await sleep(1000,signal);}return ask(role,extra,{onWait,signal},true);}}
  if(!r.ok)throw Error(data.error||`AI 요청 실패 (${r.status})`);
- return data;
+ return {...data,stale:captured!==stateKey()};
 }
 
 const MASCOT=`<svg viewBox="4 16 88 72" aria-hidden="true" class="harbor-mascot">
@@ -49,13 +51,13 @@ function initBriefing(){
  let busy=false,lastKey='',lastAt=0;
  const run=async(manual=false)=>{
   if(busy)return;busy=true;btn.disabled=true;btn.textContent='작성 중…';body.innerHTML='<p class="ai-loading"><span></span><span></span><span></span> AI가 현재 상황을 정리하고 있어요</p>';
-  try{const d=await ask('briefing',{},{onWait:s=>{body.innerHTML=`<p class="ai-muted">AI 사용이 몰려 잠시 쉬고 있어요. ${s}초 뒤 다시 시도할게요…</p>`;}});body.innerHTML=`<p>${fmt(d.content||'응답이 비어 있습니다.')}</p>`;lastAt=Date.now();}
+  try{const d=await ask('briefing',{},{onWait:s=>{body.innerHTML=`<p class="ai-muted">AI 사용이 몰려 잠시 쉬고 있어요. ${s}초 뒤 다시 시도할게요…</p>`;}});body.innerHTML=replyHtml(d);lastAt=Date.now();}
   catch(e){body.innerHTML=`<p class="ai-error">${esc(e.message)}</p>`;}
   finally{busy=false;btn.disabled=false;btn.textContent='다시 브리핑';}
  };
  btn.onclick=()=>run(true);
  setInterval(()=>{
-  if(!status.configured||busy||!card.offsetParent||aiCoolingDown())return; // only while the panel is visible
+  if(document.hidden||!status.configured||busy||!card.offsetParent||aiCoolingDown())return; // only while the panel is visible
   const s=twin()?.aiContext?.();if(!s)return;const r=s.recommendation,t=s.transferInProgress;
   const key=r?`${r.from}>${r.to}:${Math.round(r.amountT/20)}`:t?`T${t.from}>${t.to}`:'none';
   if(key!==lastKey&&Date.now()-lastAt>20000&&(r||t||lastKey)){lastKey=key;run();}
@@ -72,13 +74,13 @@ function initRiskGuide(){
  let busy=false,lastSig='',lastAt=0;
  const run=async()=>{
   if(busy)return;busy=true;btn.disabled=true;body.innerHTML='<p class="ai-loading"><span></span><span></span><span></span> 원인과 조치를 정리하고 있어요</p>';
-  try{const d=await ask('risk',{},{onWait:s=>{body.innerHTML=`<p class="ai-muted">AI 사용이 몰려 잠시 쉬고 있어요. ${s}초 뒤 다시 안내할게요…</p>`;}});body.innerHTML=`<p>${fmt(d.content)}</p>`;lastAt=Date.now();}
+  try{const d=await ask('risk',{},{onWait:s=>{body.innerHTML=`<p class="ai-muted">AI 사용이 몰려 잠시 쉬고 있어요. ${s}초 뒤 다시 안내할게요…</p>`;}});body.innerHTML=replyHtml(d);lastAt=Date.now();}
   catch(e){body.innerHTML=`<p class="ai-error">${esc(e.message)}</p>`;}
   finally{busy=false;btn.disabled=false;}
  };
  btn.onclick=run;
  setInterval(()=>{
-  const s=twin()?.aiContext?.();if(!s)return;const sev=s.risk.severity;
+  if(document.hidden)return;const s=twin()?.aiContext?.();if(!s)return;const sev=s.risk.severity;
   if(sev===0){card.hidden=true;lastSig='';return;}
   card.hidden=false;card.dataset.level=String(sev);
   if(!status.configured){if(!busy)body.innerHTML='<p class="ai-muted">AI 키가 설정되면 원인과 즉시 조치를 안내합니다.</p>';return;}
@@ -105,15 +107,16 @@ function initChat(){
  const suggestions=['지금 상황 요약해줘','풍속 20m/s면 하역 계속해도 돼?','P-A에서 S-A로 200t 옮기면 어때?','다음 화물 내리면 어떻게 돼?'];
  chips.innerHTML=suggestions.map(q=>`<button type="button">${esc(q)}</button>`).join('');
  chips.querySelectorAll('button').forEach(b=>b.onclick=()=>{input.value=b.textContent;submit();});
+ let chatRequest=null;
  const submit=async()=>{
   const q=input.value.trim();if(!q||busy)return;
-  if(status.configured===false){add('bot','AI 키가 서버에 설정되지 않아 지금은 답할 수 없어요.','error');return;}
-  busy=true;send.disabled=true;input.value='';input.style.height='';chips.hidden=true;const mine=++session;
-  add('user',esc(q));history.push({role:'user',content:q});
+  if(status.configured===false&&!status.unreachable){add('bot','AI 키가 서버에 설정되지 않아 지금은 답할 수 없어요.','error');return;}
+  busy=true;chatRequest=new AbortController();send.disabled=true;input.value='';input.style.height='';chips.hidden=true;const mine=++session;
+  add('user',esc(q));while(history.length>12){history.shift();while(history.length&&history[0].role!=='user')history.shift();}history.push({role:'user',content:q});
   const wait=add('bot','<span class="ai-loading"><span></span><span></span><span></span></span>','pending');
   try{
    for(let round=0;round<3;round++){
-    const d=await ask('chat',{messages:history},{onWait:s=>{if(mine===session)wait.innerHTML=`<span class="hc-tool">⏳ AI 사용이 몰려 잠시 쉬고 있어요. ${s}초 뒤 자동으로 이어서 답할게요…</span>`;}});
+    const d=await ask('chat',{messages:history},{signal:chatRequest.signal,onWait:s=>{if(mine===session)wait.innerHTML=`<span class="hc-tool">⏳ AI 사용이 몰려 잠시 쉬고 있어요. ${s}초 뒤 자동으로 이어서 답할게요…</span>`;}});
     if(mine!==session)return;
     if(d.tool_calls?.length){
      history.push({role:'assistant',content:d.content||'',tool_calls:d.tool_calls});
@@ -124,10 +127,10 @@ function initChat(){
       history.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
       add('bot',`<span class="hc-tool done">⚙ 시뮬레이션 실행: ${esc(describe(args))}</span>`,'tool');
      }
-     log.append(wait);continue;
+     log.append(wait);if(round===2)throw Error('가상 계산 반복 한도에 도달했습니다. 새 대화에서 조건을 하나씩 질문하세요.');continue;
     }
     history.push({role:'assistant',content:d.content||''});
-    wait.classList.remove('pending');wait.innerHTML=fmt(d.content||'답변을 만들지 못했어요. 질문을 바꿔 다시 시도해 주세요.');
+    wait.classList.remove('pending');wait.innerHTML=replyHtml(d);
     break;
    }
   }catch(e){if(mine!==session)return;wait.classList.remove('pending');wait.classList.add('error');wait.textContent=e.message;history.pop();}
@@ -138,7 +141,7 @@ function initChat(){
  input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();submit();}});
  input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,96)+'px';});
  const toggle=open=>{panel.hidden=!open;launcher.classList.toggle('open',open);launcher.querySelector('.hl-bubble').hidden=true;if(open)setTimeout(()=>input.focus(),50);};
- const reset=()=>{session++;history.length=0;busy=false;send.disabled=false;log.replaceChildren();greet();chips.hidden=false;input.value='';input.style.height='';input.focus();};
+ const reset=()=>{chatRequest?.abort();session++;history.length=0;busy=false;send.disabled=false;log.replaceChildren();greet();chips.hidden=false;input.value='';input.style.height='';input.focus();};
  panel.querySelector('.hc-reset').onclick=reset;
  launcher.onclick=()=>toggle(panel.hidden);panel.querySelector('.hc-close').onclick=()=>toggle(false);
  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!panel.hidden){e.stopPropagation();toggle(false);}},true);
@@ -172,12 +175,13 @@ function initReport(){
   ...(d.comparison?d.comparison.map(m=>[`비교 · ${m.method}`,m.peakHeelDeg===undefined?m.result:`최대 ${m.peakHeelDeg}도 · 초과 ${m.secondsOverThreshold}초 · 이송 ${m.movedT}톤 · 펌프 ${m.pumpSeconds}초`]):[])];};
  const run=async()=>{
   const d=twin()?.aiReportData?.();if(!d||busy)return;
+  dl.disabled=true;text='';
   if(!d.unloading.containersUnloaded&&!d.results.transfersApproved){body.innerHTML='<p class="ai-muted">아직 기록이 없어요. 시뮬레이션을 시작한 뒤 일지를 만들어 주세요.</p>';return;}
   busy=true;btn.disabled=true;btn.textContent='작성 중…';const table=rows(d);
   const tableHtml=`<table class="ai-table">${table.map(([k,v])=>`<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</table>`;
   body.innerHTML=tableHtml+loading('AI가 작업 일지를 쓰고 있어요');
   try{const r=await ask('report',{context:d},{onWait:s=>{body.innerHTML=tableHtml+waitMsg(s);}});
-   const story=plainText(r.content||'');body.innerHTML=tableHtml+`<div class="ai-report-text">${fmt(story).replace(/\[([^\]]{2,12})\]/g,'<b class="ai-sec">$1</b>')}</div>`;
+   const story=plainText(r.content||'');body.innerHTML=tableHtml+`<div class="ai-report-text">${replyHtml(r)}</div>`;
    const now=new Date().toLocaleString('ko-KR',{timeZone:'Asia/Seoul'});
    text=`HARBOR TWIN 하역·평형수 작업 일지\n작성: ${now} (KST) · AI 보조 작성 · 개념검증용 가정 모델\n선박: ${d.vessel}\n\n[기록 수치]\n${table.map(([k,v])=>`- ${k}: ${v}`).join('\n')}\n\n${story}\n\n[주요 기록 원문]\n${d.events.join('\n')}\n\n※ 수치는 시뮬레이션 기록값, 서술은 AI 작성입니다. 실제 선박 안전 판정이 아닙니다.\n`;
    dl.disabled=false;}
@@ -190,55 +194,26 @@ function initReport(){
 }
 
 /* ④ pre-unloading weather check: verdict from a fixed rule table, explanation by AI */
-const RULES={wind:{caution:10,stop:15,unit:'m/s',label:'평균 풍속'},wave:{caution:1,stop:2,unit:'m',label:'유의파고'},vis:{caution:3,stop:1,unit:'km',label:'시정'}};
-const LEVEL=['하역 정상','주의','중지 검토'];
-function judgeWeather(src){
- const items=[],lv=(v,r,low=false)=>v===null||v===undefined?null:low?(v<r.stop?2:v<r.caution?1:0):(v>=r.stop?2:v>=r.caution?1:0);
- const add=(name,value,unit,level,rule)=>items.push({name,value,unit,level,rule});
- add('바람',src.wind,'m/s',lv(src.wind,RULES.wind),`${RULES.wind.caution} m/s 이상 주의 · ${RULES.wind.stop} m/s 이상 중지 검토`);
- add('파도',src.height,'m',lv(src.height,RULES.wave),`${RULES.wave.caution} m 이상 주의 · ${RULES.wave.stop} m 이상 중지 검토`);
- add('시정',src.visKm,'km',src.visKm!=null?lv(src.visKm,RULES.vis,true):src.weather==='fog'?1:null,`${RULES.vis.caution} km 미만 주의 · ${RULES.vis.stop} km 미만 중지 검토`);
- const wet=src.weather==='rain'||src.weather==='snow'||(src.rainMm>0);add('비·눈',src.rainMm??null,'mm',src.weather?wet?1:0:null,'비·눈이 오면 주의 (미끄럼·시야)');
- if(src.ship)add('우리 배 예측',src.ship.peak,'도',src.ship.over?1:0,`파도 포함 순간 기울기가 시연 한도 ${src.ship.threshold}도를 넘으면 주의`);
- const known=items.filter(i=>i.level!==null),level=Math.max(0,...known.map(i=>i.level));
- return {verdict:LEVEL[level],level,items,missing:items.filter(i=>i.level===null).map(i=>i.name)};
-}
 function initWeatherCheck(){
  const env=$('.environment-panel');if(!env)return;
  const card=document.createElement('section');card.className='ai-card ai-weather';card.setAttribute('aria-live','polite');
- card.innerHTML=`<div class="ai-card-head"><span class="ai-badge">AI</span><strong>하역 전 기상 위험 판단</strong><button type="button" class="ai-refresh">AI 설명 받기</button></div><div class="ai-verdict"><span class="ai-light"></span><b>기상 확인 중…</b><small></small></div><div class="ai-rules"></div><div class="ai-card-body"></div><p class="ai-foot">판정은 아래 기준표로 자동 결정 · AI는 이유와 조치를 설명만 합니다 · 기준은 시연용</p>`;
- const anchor=env.querySelector('.applied-box')||env.querySelector('#env-applied');(anchor?anchor.after(card):env.append(card));
- const verdictEl=card.querySelector('.ai-verdict'),rulesEl=card.querySelector('.ai-rules'),body=card.querySelector('.ai-card-body'),btn=card.querySelector('.ai-refresh');
- let current=null,busy=false,seq=0;
- const portKey=()=>$('#env-location')?.value||'busanNew',portName=()=>$('#env-location')?.selectedOptions?.[0]?.textContent||'';
- const formNum=id=>{const v=Number($('#'+id)?.value);return Number.isFinite(v)?v:null;};
- async function gather(){
-  let obs=null;try{obs=await fetch(`${ROOT}/environment/latest?port=${encodeURIComponent(portKey())}`,{cache:'no-store'}).then(r=>r.ok?r.json():null);}catch{}
-  const m=obs?.marine?.usable?obs.marine:null,w=obs?.weather?.usable?obs.weather:null;
-  const vs=Number(w?.raw?.VS),rn=Number(w?.raw?.RN);
-  const src={port:portName(),
-   wind:m?m.data.wind:formNum('env-wind'),windDirection:m?m.data.windDirection:formNum('env-windDirection'),height:m?m.data.height:formNum('env-height'),period:m?m.data.period:formNum('env-period'),direction:m?m.data.direction:formNum('env-direction'),
-   weather:w?w.weather:($('#env-weather')?.value||null),visKm:w&&Number.isFinite(vs)&&vs>0?Math.round(vs/10)/10:null,rainMm:w&&Number.isFinite(rn)&&rn>=0?rn:null,temperature:w?.temperature??null,
-   marineSource:m?`기상청 해양기상부이 ${m.station?.name??''} · ${String(m.observedAt).replace('T',' ').slice(0,16)}`:'실제 관측 없음 · 화면 입력값 사용',
-   weatherSource:w?`기상청 ASOS ${w.station?.name??''} · ${String(w.observedAt).replace('T',' ').slice(0,16)}`:'실제 관측 없음 · 화면 입력값 사용'};
-  try{const f=twin()?.aiWhatIf?.({wind_speed:src.wind,wind_direction:src.windDirection,wave_height:src.height,wave_period:src.period,wave_direction:src.direction});const b=f?.bestTransferByModel??f?.withoutTransfer;if(b&&Number.isFinite(b.peakWithWavesDeg))src.ship={peak:b.peakWithWavesDeg,threshold:f.conditions.thresholdDeg,over:b.peakWithWavesDeg>f.conditions.thresholdDeg,transfer:f.bestTransferByModel?.transfer??null,verdict:f.modelVerdict};}catch{}
-  return src;
+ card.innerHTML='<div class="ai-card-head"><span class="ai-badge">AI</span><strong>현재 적용 조건 · 작업 판정</strong><button type="button" class="ai-refresh">AI 설명 받기</button></div><div class="ai-verdict"><span class="ai-light"></span><b>적용 조건 확인 중</b><small></small></div><div class="ai-rules"></div><div class="ai-card-body"></div><p class="ai-foot">채팅·가상 실험과 같은 시연 기준 · 최신 조회나 미적용 입력으로 판정을 덮어쓰지 않습니다.</p>';
+ const anchor=env.querySelector('.applied-box')||env.querySelector('#env-applied');anchor?anchor.after(card):env.append(card);
+ const verdict=card.querySelector('.ai-verdict'),rules=card.querySelector('.ai-rules'),body=card.querySelector('.ai-card-body'),btn=card.querySelector('.ai-refresh');
+ let busy=false,lastKey='',current=null;
+ function refresh(){const c=twin()?.aiContext?.();if(!c)return;const a=c.operationAssessment;current=c;
+  const key=JSON.stringify([c.environment,a.label]);if(key!==lastKey){body.innerHTML='<p class="ai-muted">현재 적용 조건으로 설명을 생성할 수 있습니다. 조건을 바꾸면 이전 설명을 지웁니다.</p>';lastKey=key;}
+  card.dataset.level=String(a.level);verdict.querySelector('b').textContent=a.label;
+  verdict.querySelector('small').textContent=`${a.port??'환경 미적용'} · ${a.source} · ${a.conditionAt??'시각 미설정'}`;
+  rules.innerHTML=`<table class="ai-table">${a.items.map(i=>`<tr data-level="${i.level??'x'}"><th>${esc(i.name)}</th><td>${i.value===null?'자료 없음':esc(i.value+' '+i.unit)}</td><td>${esc(i.level===null?'판정 보류':['시연 기준 내','주의','중지 검토'][i.level])}</td></tr>`).join('')}</table><p class="ai-src">${esc(a.scope)}${a.missing.length?' · 미확인: '+esc(a.missing.join(', ')):''}</p>`;
  }
- async function refresh(){
-  const mine=++seq;const src=await gather();if(mine!==seq)return;const j=judgeWeather(src);current={...src,...j};
-  card.dataset.level=String(j.level);verdictEl.querySelector('b').textContent=`${j.verdict}`;verdictEl.querySelector('small').textContent=`${src.port} · ${src.marineSource.includes('부이')?'실제 관측 기준':'입력값 기준'}`;
-  rulesEl.innerHTML=`<table class="ai-table">${j.items.map(i=>`<tr data-level="${i.level??'x'}"><th>${esc(i.name)}</th><td>${i.value===null||i.value===undefined?'관측값 없음':esc(i.value+' '+i.unit)}</td><td>${i.level===null?'—':LEVEL[i.level]}</td></tr>`).join('')}</table><p class="ai-src">바람·파도: ${esc(src.marineSource)}<br>날씨: ${esc(src.weatherSource)}</p>`;
-  if(!body.innerHTML)body.innerHTML='<p class="ai-muted">‘AI 설명 받기’를 누르면 이 판정의 이유와 권장 조치를 쉬운 말로 알려드려요.</p>';
- }
- btn.onclick=async()=>{if(busy)return;busy=true;btn.disabled=true;body.innerHTML=loading('기상 판단 이유를 정리하고 있어요');
-  try{await refresh();const c=current;const ctx={verdict:c.verdict,port:c.port,items:c.items.map(i=>({name:i.name,value:i.value,unit:i.unit,result:i.level===null?'관측값 없음':LEVEL[i.level],rule:i.rule})),missing:c.missing,
-    marineSource:c.marineSource,weatherSource:c.weatherSource,temperatureC:c.temperature,shipForecast:c.ship?{peakWithWavesDeg:c.ship.peak,thresholdDeg:c.ship.threshold,recommendedTransfer:c.ship.transfer,modelVerdict:c.ship.verdict}:null,
-    ruleNote:'시연용 기준표. 실제 적용 시 터미널·선사 운영 기준으로 교체'};
-   const r=await ask('weather',{context:ctx},{onWait:s=>{body.innerHTML=waitMsg(s);}});body.innerHTML=`<p>${fmt(r.content)}</p>`;}
-  catch(e){body.innerHTML=`<p class="ai-error">${esc(e.message)}</p>`;}
-  finally{busy=false;btn.disabled=false;btn.textContent='다시 설명';}};
- $('#env-location')?.addEventListener('change',()=>{body.innerHTML='';refresh();});
- setTimeout(refresh,1500);setInterval(()=>{if(!busy&&!document.hidden)refresh();},300000);
+ btn.onclick=async()=>{if(busy)return;refresh();if(!current)return;busy=true;btn.disabled=true;body.innerHTML=loading('현재 적용 조건을 설명하고 있어요');const key=lastKey;
+  try{const d=await ask('weather',{context:current});if(key===lastKey)body.innerHTML=replyHtml(d);}
+  catch(e){if(key===lastKey)body.innerHTML=`<p class="ai-error">${esc(e.message)}</p>`;}
+  finally{busy=false;btn.disabled=false;}};
+ document.addEventListener('harbor:environment',refresh);
+ // This reads applied model data only: it never queries or substitutes a live observation.
+ setTimeout(refresh,0);setInterval(()=>{if(!document.hidden&&card.offsetParent)refresh();},2000);
 }
 
 /* ⑤ manifest → unloading plan: AI extracts, the browser validates, the operator applies */
@@ -257,19 +232,21 @@ function initManifest(){
  const host=$('#inputMessage');if(!host)return;
  const card=document.createElement('section');card.className='ai-card ai-manifest';card.setAttribute('aria-live','polite');
  card.innerHTML=`<div class="ai-card-head"><span class="ai-badge">AI</span><strong>적하목록 → 하역 계획 변환</strong></div>
- <p class="ai-muted ai-help">적하목록·하역 지시서를 형식 상관없이 붙여 넣으면 AI가 화물마다 위치(BAY·ROW·TIER)·중량·하역 순서를 뽑아요. 확인 후 적용하면 시뮬레이션이 그 계획으로 다시 시작합니다.</p>
+ <p class="ai-muted ai-help">적하목록·하역 지시서를 붙여 넣으면 AI가 화물마다 위치(BAY·ROW·TIER)·중량·하역 순서를 뽑아요. 확인 후 적용하면 시뮬레이션이 그 계획으로 다시 시작합니다.</p>
  <textarea class="ai-manifest-input" rows="6" maxlength="6000" placeholder="예) MSCU1234567 BAY 03 ROW 04 TIER 84 28,400kg 1순위"></textarea>
- <div class="ai-actions"><button type="button" class="outline-btn ai-sample">예시 넣기</button><button type="button" class="primary-btn ai-convert">AI로 변환</button></div>
+ <label>적용 방식 <select class="ai-manifest-mode"><option value="patch">예제 일부 수정 · 나머지는 합성 화물 유지</option><option value="listed">목록만 적재 · 나머지 칸은 비움</option></select></label><p class="ai-muted">실제 베이플랜을 가상 격자로 축약합니다. 위치와 중량, 하부 지지 화물을 직접 확인하세요.</p><div class="ai-actions"><button type="button" class="outline-btn ai-sample">예시 넣기</button><button type="button" class="primary-btn ai-convert">AI로 변환</button></div>
  <div class="ai-card-body"></div><div class="ai-actions"><button type="button" class="primary-btn ai-apply" hidden>이 계획으로 시뮬레이션 적용</button></div>
- <p class="ai-foot">가상 선박 격자: BAY 1(선미)–6(선수) · ROW 1·2 좌현 / 3·4 우현 · TIER 1 창내, 2·3 갑판 위 · 목록에 없는 화물은 예제 중량·기본 순서</p>`;
+ <label><input type="checkbox" class="ai-manifest-confirm"> 변환 위치·중량·제외 항목과 선택한 적용 방식을 확인했습니다.</label><p class="ai-foot">가상 선박 격자: BAY 1(선미)–6(선수) · ROW 1·2 좌현 / 3·4 우현 · TIER 1 창내, 2·3 갑판 위 · 목록에 없는 화물은 예제 중량·기본 순서</p>`;
  host.before(card);
  const input=card.querySelector('textarea'),body=card.querySelector('.ai-card-body'),conv=card.querySelector('.ai-convert'),apply=card.querySelector('.ai-apply');
  let extracted=null,busy=false;
  card.querySelector('.ai-sample').onclick=()=>{input.value=SAMPLE;input.focus();};
+ const mode=card.querySelector('.ai-manifest-mode'),confirm=card.querySelector('.ai-manifest-confirm');
+ const invalidate=()=>{confirm.checked=false;apply.disabled=true;};mode.onchange=invalidate;confirm.onchange=()=>{apply.disabled=!confirm.checked;};input.addEventListener('input',()=>{extracted=null;apply.hidden=true;invalidate();});
  const parse=t=>{const s=String(t||''),a=s.indexOf('{'),b=s.lastIndexOf('}');if(a<0||b<a)throw Error('AI가 목록을 읽지 못했어요. 다시 시도해 주세요.');return JSON.parse(s.slice(a,b+1));};
  conv.onclick=async()=>{
   const text=input.value.trim();if(text.length<10){body.innerHTML='<p class="ai-error">적하목록 내용을 붙여 넣어 주세요.</p>';return;}
-  if(busy)return;busy=true;conv.disabled=true;apply.hidden=true;extracted=null;body.innerHTML=loading('AI가 적하목록을 읽고 있어요');
+  if(busy)return;invalidate();busy=true;conv.disabled=true;apply.hidden=true;extracted=null;body.innerHTML=loading('AI가 적하목록을 읽고 있어요');
   try{const r=await ask('manifest',{manifest:text,context:{}},{onWait:s=>{body.innerHTML=waitMsg(s);}});
    const data=parse(r.content);const pv=twin().manifestPreview(data.items);
    const notes=(Array.isArray(data.notes)?data.notes:[]).slice(0,5).map(n=>plainText(n));
@@ -278,18 +255,18 @@ function initManifest(){
     ${pv.items.length?`<div class="ai-scroll"><table class="ai-table ai-grid"><tr><th>순서</th><th>식별자</th><th>위치</th><th>현측</th><th>중량</th></tr>${[...pv.items].sort((a,b)=>(a.order||1e9)-(b.order||1e9)).map(i=>`<tr><td>${i.order||'—'}</td><td>${esc(i.label||i.id)}</td><td>BAY ${i.bay}·ROW ${i.row}·TIER ${i.tier}</td><td>${i.side}</td><td>${i.weight}톤</td></tr>`).join('')}</table></div>`:''}
     ${pv.skipped.length?`<p class="ai-error">제외: ${pv.skipped.map(esc).join(' / ')}</p>`:''}
     ${notes.length?`<ul class="ai-notes">${notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>`:''}`;
-   apply.hidden=!pv.items.length;}
+   apply.hidden=!pv.items.length;apply.disabled=!confirm.checked;}
   catch(e){body.innerHTML=`<p class="ai-error">${esc(e.message)}</p>`;}
   finally{busy=false;conv.disabled=false;}
  };
- apply.onclick=()=>{if(!extracted)return;try{const res=twin().applyManifest(extracted);apply.hidden=true;
+ apply.onclick=()=>{if(!extracted||!confirm.checked)return;try{const res=twin().applyManifest(extracted,{mode:mode.value});apply.hidden=true;
    $('#inputMessage').textContent=`AI 적하목록 변환 적용 완료 · ${res.applied}개 화물의 중량·순서를 반영했어요.${res.reordered?` 같은 칸 위쪽 화물 ${res.reordered}개를 먼저 내리도록 순서를 맞췄어요.`:''} 시작 버튼을 눌러 시뮬레이션하세요.`;
    body.insertAdjacentHTML('beforeend','<p class="ai-ok">✓ 적용 완료 · 시뮬레이션이 이 계획으로 초기화됐어요.</p>');}
   catch(e){body.insertAdjacentHTML('beforeend',`<p class="ai-error">${esc(e.message)}</p>`);}};
 }
 
 export async function initAssistant(){
- try{status=await fetch(API+'/status').then(r=>r.json());}catch{status={configured:false,unreachable:true};}
+ try{status=await fetch(API+'/status',{signal:AbortSignal.timeout(8000)}).then(r=>r.json());}catch{status={configured:false,unreachable:true};}
  initBriefing();initRiskGuide();initChat();initReport();initWeatherCheck();initManifest();
  if(!status.configured)document.body.classList.add('ai-unconfigured');
 }

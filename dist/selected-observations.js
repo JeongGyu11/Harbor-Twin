@@ -1,5 +1,5 @@
 export function initSelectedObservations({read,apply,onApplied}){
- const $=s=>document.querySelector(s),base=['localhost','127.0.0.1'].includes(location.hostname)&&location.port==='4174'?'http://127.0.0.1:4175':'';
+ const $=s=>document.querySelector(s),base=['localhost','127.0.0.1'].includes(location.hostname)?(location.port==='4174'?'http://127.0.0.1:4175':''):'https://harbor-twin-server.onrender.com';
  let pending=null,signature='',busy=false;
  const stamp=r=>`${r.observedAt.replace('T',' ')} / ${r.offsetMinutes===0?'선택 시각과 일치':`선택보다 ${Math.abs(r.offsetMinutes)}분 ${r.offsetMinutes<0?'이전':'이후'}`} / ${r.station.name} (${r.station.id}) · ${r.station.distanceKm} km`;
  const invalidate=()=>{pending=null;$('#selected-weather').textContent='날씨 관측: 항구·시간 변경 · 조회 필요';$('#selected-marine').textContent='해양 관측: 항구·시간 변경 · 조회 필요';$('#selected-marine-apply').disabled=true;$('#selected-status').textContent='항구·시간 변경 · 실제 관측을 다시 조회하세요. 기존 적용 조건 유지';};

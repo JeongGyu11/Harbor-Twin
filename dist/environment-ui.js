@@ -1,10 +1,10 @@
-import {initSelectedObservations} from './selected-observations.js';
-import {initStoredWeather} from './weather-storage.js?v=valueaudit1';
-import {initObservations} from './observations-ui.js?v=collector1';
+import {initSelectedObservations} from './selected-observations.js?v=fix1028';
+import {initStoredWeather} from './weather-storage.js?v=fix1028';
+import {initObservations} from './observations-ui.js?v=fix1028';
 import {PRESETS,validateEnvironment,fetchEnvironment} from './environment.mjs?v=windbands1';
 export function initEnvironment({apply:onApply}){
  let observationBaseline=null;
- const apply=env=>{if(env?.observation&&env.source.includes('기상청'))observationBaseline=JSON.parse(JSON.stringify(env));onApply(env);};
+ const apply=env=>{if(env?.observation&&env.source.includes('기상청'))observationBaseline=JSON.parse(JSON.stringify(env));onApply(env);document.dispatchEvent?.(new Event('harbor:environment'));};
  const $=s=>document.querySelector(s);let forecast=null,latest=null,autoBusy=false,epoch=0,nextRefresh=Date.now(),lastAuto='',applyingForecast=false;
  function applyForecast(){applyingForecast=true;try{$('#env-apply').onclick();}finally{applyingForecast=false;}}
  const fields=['wind','windDirection','height','period','direction','heading'];
@@ -50,6 +50,6 @@ export function initEnvironment({apply:onApply}){
  initSelectedObservations({read:readObservation,apply,onApplied:env=>{forecast=null;write(env);$('#env-applied').textContent=`적용: ${env.port} / ${env.source} / 선택 ${env.localTime} KST`;}});
  refreshAuto();
 
- return {restore(env){epoch++;forecast=null;latest=null;observationBaseline=env?.observation?JSON.parse(JSON.stringify(env)):null;$('#env-auto-apply').disabled=true;if(env){write(env);$('#env-time').value=env.localTime;const key=Object.keys(PRESETS).find(k=>Math.abs(PRESETS[k][0]-env.lat)<.00001&&Math.abs(PRESETS[k][1]-env.lon)<.00001);if(key)$('#env-location').value=key;$('#env-applied').textContent=`적용: ${env.port??'실험 위치'} / ${env.source} / ${env.localTime} KST / 바람 ${env.wind} m/s · 파고 ${env.height}m · 실험안 B 환경 복원`;}else $('#env-applied').textContent='실험안 B 적용 · 기본 합성 파도 환경';$('#env-message').textContent='실험안에 저장된 환경을 복원했습니다. 과거 관측 스냅샷일 수 있으며 최신 자료로 자동 대체하지 않습니다.';}};
+ return {restore(env){epoch++;forecast=null;latest=null;observationBaseline=env?.observation?JSON.parse(JSON.stringify(env)):null;$('#env-auto-apply').disabled=true;if(env){write(env);$('#env-time').value=env.localTime;const key=Object.keys(PRESETS).find(k=>Math.abs(PRESETS[k][0]-env.lat)<.00001&&Math.abs(PRESETS[k][1]-env.lon)<.00001);if(key)$('#env-location').value=key;$('#env-applied').textContent=`적용: ${env.port??'실험 위치'} / ${env.source} / ${env.localTime} KST / 바람 ${env.wind} m/s · 파고 ${env.height}m · 실험안 B 환경 복원`;}else $('#env-applied').textContent='실험안 B 적용 · 기본 합성 파도 환경';$('#env-message').textContent='실험안에 저장된 환경을 복원했습니다. 과거 관측 스냅샷일 수 있으며 최신 자료로 자동 대체하지 않습니다.';document.dispatchEvent?.(new Event('harbor:environment'));}};
 
 }

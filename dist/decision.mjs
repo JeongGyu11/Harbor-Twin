@@ -115,3 +115,5 @@ export function runComparison(model,queue,cfg,mode){
  }
  return {mode,complete:time<=limit,time,peak,exceed,instantPeak,instantExceed,observationDuration,wave:cfg.wave??'off',environment:cfg.environment??null,waveModel:cfg.environment?'environment-v1 / assumed roll + wind disturbance':'two-sine-v1 / 8s+13s / fixed phase',moved,pumpSeconds,starts,violations,levels:s.levels,points};
 }
+
+export {assessOperation} from './operation-policy.mjs';

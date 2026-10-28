@@ -5,10 +5,10 @@ import {windResponse} from './wind-model.mjs?v=windbands1';
 import {initWorkspaceUI} from './workspace-ui.js?v=placement2';
 import {createWeatherEffects} from './weather-effects.js?v=real1';
 import * as THREE from './vendor/three.module.js';
-import * as Decision from './decision.mjs?v=risk1';
+import * as Decision from './decision.mjs?v=fix1028';
 import { createOcean } from './ocean.js?v=real1';
 import { hullPose } from './ocean-motion.mjs?v=windbands1';
-import { initEnvironment } from './environment-ui.js?v=main1';
+import { initEnvironment } from './environment-ui.js?v=fix1028';
 import { createSky, SUN_DIRECTION } from './sky.js?v=real1';
 import { hullMaterial, deckMaterial, containerMaterials, containerColorIndex, addShipDetails } from './ship-visuals.js?v=real1';
 initWorkspaceUI();
@@ -32,6 +32,7 @@ const referenceMass=MODEL.baseMass+2400+cargo.reduce((sum,c)=>sum+c.weight,0);
 const referenceKG=(MODEL.baseMass*MODEL.baseKG+2400*tankHeight/4+cargo.reduce((sum,c)=>sum+c.weight*cargoHeight(c),0))/referenceMass;
 const surfaceMoment=MODEL.waterDensity*MODEL.tankLength*MODEL.tankBreadth**3/12;
 let referenceKM=referenceKG+4*surfaceMoment/referenceMass+MODEL.initialGM;
+const vesselReferenceKM=referenceKM;
 function metrics(withTransfer=true,levels=state.tanks){
  let mass=MODEL.baseMass,mz=0,mx=0,vertical=MODEL.baseMass*MODEL.baseKG,freeMoment=0;
  for(const c of cargo)if(!state.removed.includes(c.id)){mass+=c.weight;mz+=c.weight*c.z;mx+=c.weight*c.x;vertical+=c.weight*cargoHeight(c);}
@@ -191,8 +192,8 @@ function initDecisionUI(){
  $('#waveLevel').onchange=()=>{$('#inputMessage').textContent='파도 세기 변경은 설정 적용 버튼을 누르면 반영됩니다.';};
  $('#strategy').onchange=()=>{$('#inputMessage').textContent='추천 방식 변경은 설정 적용 버튼을 누르면 반영됩니다.';};
  $('#downloadPlan').onclick=()=>{if(initialRemoved.length){$('#inputMessage').textContent='부분 적재 상태는 CSV에 빈 칸을 표현할 수 없습니다. 적재·탱크 실험의 입력·결과 JSON 저장을 사용하세요.';return;}buildQueue();downloadFile('harbor-cargo.csv','id,weight,order\n'+state.queue.map((id,i)=>`${id},${cargo.find(c=>c.id===id).weight},${i+1}`).join('\n'),'text/csv;charset=utf-8');};
- $('#cargoFile').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>100000)throw Error('CSV는 100 KB 이하로 입력하세요.');const parsed=parseCargoCSV(await file.text());for(const c of parsed)cargo.find(v=>v.id===c.id).weight=c.weight;initialRemoved=[];initialTime=0;placementActive=false;customOrder=parsed.map(c=>c.id);referenceKM=Decision.makeModel(cargo).km;invalidateComparison();reset();$('#scenario').disabled=true;$('#dataSource').textContent='사용자 CSV · 가상 위치 / 입력 중량·순서';$('#inputMessage').textContent='CSV 적용 완료 · 학습·검증된 실제 선박 모델은 아닙니다.';}catch(error){$('#inputMessage').textContent=error.message;}finally{e.target.value='';}};
- $('#restorePlan').onclick=()=>{originalCargo.forEach((c,i)=>Object.assign(cargo[i],c));initialRemoved=[];initialTime=0;placementActive=false;customOrder=null;referenceKM=Decision.makeModel(cargo).km;$('#scenario').disabled=false;$('#dataSource').textContent='합성 예제 · 72개 화물';invalidateComparison();reset();$('#inputMessage').textContent='합성 화물 예제를 복원했습니다. 운전 조건은 현재 적용값을 유지합니다.';};
+ $('#cargoFile').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>100000)throw Error('CSV는 100 KB 이하로 입력하세요.');const parsed=parseCargoCSV(await file.text());for(const c of parsed)cargo.find(v=>v.id===c.id).weight=c.weight;initialRemoved=[];initialTime=0;placementActive=false;customOrder=parsed.map(c=>c.id);invalidateComparison();reset();$('#scenario').disabled=true;$('#dataSource').textContent='사용자 CSV · 가상 위치 / 입력 중량·순서';$('#inputMessage').textContent='CSV 적용 완료 · 학습·검증된 실제 선박 모델은 아닙니다.';}catch(error){$('#inputMessage').textContent=error.message;}finally{e.target.value='';}};
+ $('#restorePlan').onclick=()=>{originalCargo.forEach((c,i)=>Object.assign(cargo[i],c));initialRemoved=[];initialTime=0;placementActive=false;customOrder=null;referenceKM=vesselReferenceKM;$('#scenario').disabled=false;$('#dataSource').textContent='합성 예제 · 72개 화물';invalidateComparison();reset();$('#inputMessage').textContent='합성 화물 예제를 복원했습니다. 운전 조건은 현재 적용값을 유지합니다.';};
  $('#runComparison').onclick=()=>{
   $('#runComparison').disabled=true;$('#exportResults').disabled=true;$('#experimentStatus').textContent='같은 조건으로 3가지 방식을 계산 중입니다…';
   const payload={km:referenceKM,cargo:cargo.map(c=>({...c})),queue:[...state.queue],cfg:{...config,levels:[...config.levels],initialRemoved:[...initialRemoved],waveStart:initialTime}};
@@ -262,7 +263,7 @@ else{const rooms=[{x:145,y:76,w:170,h:145,name:'기관실',sub:'ENGINE ROOM'},{x
 function tankModal(index){modal(`<h2>${tanks[index].name}</h2><p>선박의 균형을 조절하는 평형수가 담긴 공간입니다.</p><table><tr><td>현재 평형수</td><td>${state.tanks[index].toFixed(0)} t</td></tr><tr><td>탱크 용량</td><td>1,200 t</td></tr><tr><td>채워진 비율</td><td>${(state.tanks[index]/1200*100).toFixed(0)}%</td></tr></table><p>시뮬레이션을 재생하고 추천안을 적용하면 탱크 사이로 물이 이동합니다.</p>`)}
 function facilityModal(name){modal(`<h2>${name}</h2><p>선박 내부 시설을 탐색하는 시연용 도면입니다. 실제 배관 및 시설 설계를 재현하지 않습니다.</p><table><tr><td>밸러스트 펌프</td><td>정상 2.5 t/s · 성능 저하 0.35 t/s</td></tr><tr><td>탱크</td><td>4개 · 각 1,200 t</td></tr><tr><td>BWTS</td><td>평형수 처리 시설 위치 표시</td></tr><tr><td>운전 제약</td><td>탱크별 80–1,120 t 내 이송</td></tr></table><p>이 버전은 탱크 간 이송만 계산합니다. 해수 유입·배출 및 BWTS 처리 과정의 시간·수질·전력 모델은 아직 포함하지 않습니다.</p>`)}
 function modal(html){const wasRunning=state.running;state.running=false;$('#modalContent').innerHTML=html;if(!$('#modal').open)$('#modal').showModal();update();if(wasRunning)toast('상세 정보를 보는 동안 시뮬레이션을 일시정지했습니다.');}
-function modelInfo(){modal(`<h2>계산 기준과 구현 범위</h2><p>합성 화물과 가상 탱크를 사용하는 개념 검증용 시뮬레이션입니다. 실제 선박 설계·운전 자료가 아닙니다.</p><h3>적재 높이와 수위 반영</h3><p>고정 선체 12,000 t, 선체 무게중심 높이 6.5 m, 초기 평형수 2,400 t를 가정합니다. 화물 높이는 기준면 위 13.1 + TIER 인덱스 × 4.8 m입니다. KG는 선체·남은 화물·탱크 물의 수직 모멘트 합을 총중량으로 나눕니다.</p><p>GM = 고정 KM − KG − 자유표면 보정. KM은 처음의 GM이 2.4 m가 되도록 보정한 가정값입니다. 직사각형 탱크 길이 28 m·폭 6 m, 물 밀도 1.025 t/m³, 용량 1,200 t로 자유표면 보정과 물의 무게중심을 근사합니다. 실제 선형에 따른 KM 변화와 GZ 곡선을 재현하지 않습니다.</p><p>좌우 기울기 = atan(횡방향 모멘트 / (총중량 × 추정 GM)). GM이 0.2 m 이하이면 이 모델의 계산 범위를 벗어난 것으로 보고 이송을 중지합니다. 이 수치는 시연용 제한이며 법정 기준이 아닙니다. 트림은 별도의 단순 모멘트 지표이고 최적화 대상이 아닙니다.</p><h3>추천·완료·그래프</h3><p>0.12° 이상이면 수위 80~1,120 t 범위 안에서 가능한 반대편 탱크 조합을 모두 비교합니다. 승인 시 다시 계산하며, 하중이 바뀌어 이송 방향이 부적절해지면 재평가합니다. 하역 100%와 이송 완료를 구분하고, 그래프는 가상 시간 기준으로 이송과 최종 상태까지 기록합니다.</p><h3>가상 파도</h3><p>순간 기울기 = 하역·평형수 기울기 + 합성 파도 성분. 파도는 8초·13초 사인파의 가중합이며 진폭 상한은 잔잔함 0.25°, 보통 0.75°입니다. 위상과 가상 시간을 동일하게 사용합니다. 추천에는 알려진 하역 성분만 전달하며 실측 신호 분리나 AI 추정은 아닙니다. 선박의 관성·감쇠·공진·파고 응답은 계산하지 않습니다.</p><h3>시연 범위</h3><p>1.5°는 기울기 표시용 기준입니다. ‘시연 기준 내’는 선박 전체의 안전을 보장하지 않습니다. 3D는 하역 기울기를 8배 확대하고 수면 높이로 시각적 상하·좌우·앞뒤 움직임을 더합니다. 화면의 순간 기울기 지표는 별도의 합성 외란 모델이며 3D 자세와 같지 않습니다. 선박과 탱크 형상은 모식도입니다. BWTS·센서·실제 펌프 제어, 완전한 복원성 및 구조 강도 검증, 체류 시간·비용·전력 절감 평가는 포함하지 않습니다. 현재 추천은 물리 모델의 60초 예측과 후보 탐색 또는 현재 상태 기반 규칙을 선택합니다. 학습형 AI는 미구현입니다. 초기 수위와 유량·하역 간격은 입력 설정을 따릅니다.</p><p>참고: <a href="https://assets.publishing.service.gov.uk/media/5d2c4bea40f0b64a790de8f9/Tanker_Damage_Stability_MGN_post_consultation_version_260619.pdf" target="_blank" rel="noopener">MCA의 GM·자유표면 보정 정의</a>. 일반 원리를 참고했으며 현재 가정 모델이 승인·인증되었다는 뜻은 아닙니다.</p>`)}
+function modelInfo(){modal(`<h2>계산 기준과 구현 범위</h2><p>합성 화물과 가상 탱크를 사용하는 개념 검증용 시뮬레이션입니다. 실제 선박 설계·운전 자료가 아닙니다.</p><h3>적재 높이와 수위 반영</h3><p>고정 선체 12,000 t, 선체 무게중심 높이 6.5 m, 초기 평형수 2,400 t를 가정합니다. 화물 높이는 기준면 위 13.1 + TIER 인덱스 × 4.8 m입니다. KG는 선체·남은 화물·탱크 물의 수직 모멘트 합을 총중량으로 나눕니다.</p><p>GM = 고정 KM − KG − 자유표면 보정. KM은 최초 합성 기준 선박의 GM이 2.4 m가 되도록 한 번만 보정한 가정값이며 CSV·적하목록 중량 변경으로 재보정하지 않습니다. 직사각형 탱크 길이 28 m·폭 6 m, 물 밀도 1.025 t/m³, 용량 1,200 t로 자유표면 보정과 물의 무게중심을 근사합니다. 실제 선형에 따른 KM 변화와 GZ 곡선을 재현하지 않습니다.</p><p>좌우 기울기 = atan(횡방향 모멘트 / (총중량 × 추정 GM)). GM이 0.2 m 이하이면 이 모델의 계산 범위를 벗어난 것으로 보고 이송을 중지합니다. 이 수치는 시연용 제한이며 법정 기준이 아닙니다. 트림은 별도의 단순 모멘트 지표이고 최적화 대상이 아닙니다.</p><h3>추천·완료·그래프</h3><p>0.12° 이상이면 수위 80~1,120 t 범위 안에서 가능한 반대편 탱크 조합을 모두 비교합니다. 승인 시 다시 계산하며, 하중이 바뀌어 이송 방향이 부적절해지면 재평가합니다. 하역 100%와 이송 완료를 구분하고, 그래프는 가상 시간 기준으로 이송과 최종 상태까지 기록합니다.</p><h3>가상 파도</h3><p>순간 기울기 = 하역·평형수 기울기 + 합성 파도 성분. 파도는 8초·13초 사인파의 가중합이며 진폭 상한은 잔잔함 0.25°, 보통 0.75°입니다. 위상과 가상 시간을 동일하게 사용합니다. 추천에는 알려진 하역 성분만 전달하며 실측 신호 분리나 AI 추정은 아닙니다. 선박의 관성·감쇠·공진·파고 응답은 계산하지 않습니다.</p><h3>시연 범위</h3><p>1.5°는 기울기 표시용 기준입니다. ‘시연 기준 내’는 선박 전체의 안전을 보장하지 않습니다. 3D는 하역 기울기를 8배 확대하고 수면 높이로 시각적 상하·좌우·앞뒤 움직임을 더합니다. 화면의 순간 기울기 지표는 별도의 합성 외란 모델이며 3D 자세와 같지 않습니다. 선박과 탱크 형상은 모식도입니다. BWTS·센서·실제 펌프 제어, 완전한 복원성 및 구조 강도 검증, 체류 시간·비용·전력 절감 평가는 포함하지 않습니다. 현재 추천은 물리 모델의 60초 예측과 후보 탐색 또는 현재 상태 기반 규칙을 선택합니다. 학습형 밸러스트 제어는 미구현이며 Groq 등 외부 LLM의 문서 변환·도구 호출·업무 설명은 구현되어 있습니다. 초기 수위와 유량·하역 간격은 입력 설정을 따릅니다.</p><p>참고: <a href="https://assets.publishing.service.gov.uk/media/5d2c4bea40f0b64a790de8f9/Tanker_Damage_Stability_MGN_post_consultation_version_260619.pdf" target="_blank" rel="noopener">MCA의 GM·자유표면 보정 정의</a>. 일반 원리를 참고했으며 현재 가정 모델이 승인·인증되었다는 뜻은 아닙니다.</p>`)}
 let toastTimer;function toast(text){$('#toast').textContent=text;$('#toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),3500)}
 $('#play').onclick=()=>{if(state.running){state.running=false;event('일시정지');}else{if(complete())reset();if(enforceRiskStop()){update();toast('가정 모델 계산 범위를 확인하세요.');return;}state.running=true;event('시뮬레이션 재생');}update()};
 $('#reset').onclick=()=>{reset();toast('처음 상태로 되돌렸습니다.')};
@@ -289,6 +290,7 @@ function aiContext(){
  let forecast=null;try{if(m.valid){const f=Decision.forecast(mainModel(),{...decisionInput(),transfer:null},config);if(f.valid)forecast={note:'현재 수위 유지 시 60초 하역 기울기',peakDeg:r2(f.peak),finalDeg:r2(f.final),secondsOverThreshold:f.exceed};}}catch{}
  const r=recommendation,tr=state.transfer;
  return {
+  operationAssessment:Decision.assessOperation({environment:env,risk}),generatedAt:new Date().toISOString(),
   signConvention:'기울기 음수=좌현, 양수=우현',heelDeg:r2(m.heel),instantHeelWithWavesDeg:r2(instant),gmM:r2(m.gm),thresholdDeg:config.threshold,unloadIntervalS:config.interval,pumpRateTps:config.rate,
   unloading:{containersUnloaded:state.removed.length-initialRemoved.length,containersTotal:initialCount(),unit:'컨테이너 개수(톤 아님)',running:state.running,elapsed:fmtTime(state.time-initialTime)},
   tanks:tanks.map((t,i)=>({id:t.id,name:t.name,tonnes:Math.round(state.tanks[i]),capacity:1200,operatingRange:'80-1120'})),
@@ -297,10 +299,15 @@ function aiContext(){
   transferInProgress:tr?{from:tanks[tr.from].id,to:tanks[tr.to].id,remainingT:Math.round(tr.remaining)}:null,
   forecast60s:forecast,
   risk:{level:risk.label,severity:risk.severity,direction:risk.direction,reasons:risk.reasons.map(x=>x.text),guidance:risk.guidance},
-  environment:env?{source:env.source,weather:env.weather,windMps:env.wind,windFromDeg:env.windDirection,waveHeightM:env.height,wavePeriodS:env.period,waveFromDeg:env.direction,shipHeadingDeg:env.heading}:{source:'합성 파도',wave:Decision.WAVES[config.wave??'off'].label}
+  environment:env?{source:env.source,sourceType:env.sourceType,port:env.port,localTime:env.localTime,weather:env.weather,windMps:env.wind,windFromDeg:env.windDirection,waveHeightM:env.height,wavePeriodS:env.period,waveFromDeg:env.direction,shipHeadingDeg:env.heading}:{source:'합성 파도',wave:Decision.WAVES[config.wave??'off'].label}
  };
 }
 function aiWhatIf(p={}){
+ const bounds={wind_speed:[0,113.2],wind_direction:[0,360],wave_height:[0,15],wave_period:[2,25],wave_direction:[0,360],unload_interval:[5,120],threshold:[.1,10],horizon:[20,180],transfer_amount:[1,1040]};
+ if(!p||typeof p!=='object'||Array.isArray(p))return {error:'가상 조건은 객체 형식이어야 합니다.'};
+ for(const [key,[low,high]] of Object.entries(bounds))if(p[key]!==undefined&&p[key]!==null&&(p[key]===''||!Number.isFinite(+p[key])||+p[key]<low||+p[key]>high))return {error:`${key} 입력은 ${low}–${high} 범위여야 합니다. 화면 조건은 유지됩니다.`,operationAssessment:{level:2,label:'입력 오류 · 판정 보류',scope:'범위를 벗어난 입력은 자동 보정하지 않습니다.'}};
+ if((p.transfer_from||p.transfer_to||p.transfer_amount)&&!(p.transfer_from&&p.transfer_to&&p.transfer_amount))return {error:'출발·도착 탱크와 이송량을 함께 지정하세요.',operationAssessment:{level:2,label:'입력 오류 · 판정 보류'}};
+
  const num=(v,min,max)=>v===undefined||v===null||v===''||!Number.isFinite(+v)?undefined:Math.min(max,Math.max(min,+v));
  const changes={wind:num(p.wind_speed,0,113.2),windDirection:num(p.wind_direction,0,360),height:num(p.wave_height,0,15),period:num(p.wave_period,2,25),direction:num(p.wave_direction,0,360)};
  const envChanged=Object.values(changes).some(v=>v!==undefined);
@@ -321,10 +328,13 @@ function aiWhatIf(p={}){
   if(from<0||to<0||from===to||!amount)evaluated={error:'이송 탱크 또는 이송량이 올바르지 않습니다.'};
   else{const limited=Math.min(amount,state.tanks[from]-80,1120-state.tanks[to]);const action={from,to,amount:Math.max(0,limited),rate:cfg.rate,duration:Math.max(0,limited)/cfg.rate,predictive:true};evaluated={transfer:`${p.transfer_from} → ${p.transfer_to} ${Math.round(action.amount)}t`,limitedByTankRange:limited<amount,...sum(Decision.forecast(model,input,cfg,action))};}}
  const d=Decision.choose(model,input,cfg),best=d.action?{transfer:`${tanks[d.action.from].id} → ${tanks[d.action.to].id} ${Math.round(d.action.amount)}t`,durationS:Math.ceil(d.action.duration),...sum(Decision.forecast(model,input,cfg,d.action))}:null;
- const worst=(best??sum(hold));const over=Number.isFinite(worst.peakWithWavesDeg)&&worst.peakWithWavesDeg>cfg.threshold;
+ const assess=result=>Decision.assessOperation({environment,risk:currentRisk(),peak:result?.peakWithWavesDeg??null,threshold:cfg.threshold});
+ const holdAssessment=assess(sum(hold)),bestAssessment=best?assess(best):null,evaluatedAssessment=evaluated?assess(evaluated):null;
+ const operationAssessment=evaluatedAssessment??bestAssessment??holdAssessment;
  return {conditions:{windMps:environment?.wind??null,windFromDeg:environment?.windDirection??null,waveHeightM:environment?.height??null,wavePeriodS:environment?.period??null,waveFromDeg:environment?.direction??null,unloadIntervalS:cfg.interval,thresholdDeg:cfg.threshold,horizonS:cfg.horizon,changedFromCurrent:Object.keys(p)},
   withoutTransfer:sum(hold),evaluatedTransfer:evaluated,bestTransferByModel:best,
-  modelVerdict:over?'추천 이송을 해도 파도를 합친 순간 기울기가 시연 한도를 넘습니다. 하역 일시 중지·하역 간격 확대를 검토하세요.':best?'추천 이송을 적용하면 예측 구간에서 시연 한도 안입니다.':'이송 없이도 예측 구간에서 시연 한도 안입니다.',
+  operationAssessment,withoutTransferAssessment:holdAssessment,bestTransferAssessment:bestAssessment,evaluatedTransferAssessment:evaluatedAssessment,
+  modelVerdict:operationAssessment.label+' · '+operationAssessment.scope,
   note:'가정 물리 모델의 가상 계산이며 화면의 시뮬레이션은 바뀌지 않았습니다.'+(assumed.length?` ${assumed.join('·')} 방향을 지정하지 않아 가장 불리한 측면(정횡) 방향을 가정했습니다.`:'')+(!config.environment&&envChanged&&changes.height===undefined&&synthetic?` 파고는 현재 합성 파도(${Decision.WAVES[config.wave].label})에 해당하는 ${r2(synthetic/.35)}m로 두었습니다.`:'')};
 }
 // ③ Work-log facts: every number is taken from the simulation record, the LLM only writes the narrative.
@@ -336,6 +346,7 @@ function aiReportData(){
  const labels={none:'무조정',rule:'현재 상태 기반 규칙',predictive:'60초 예측 기반 탐색'};
  const events=[...state.events].reverse(),keep=events.length>24?[...events.slice(0,4),...events.slice(-20)]:events;
  return {
+  operationAssessment:Decision.assessOperation({environment:env,risk:currentRisk()}),generatedAt:new Date().toISOString(),
   vessel:'MV HARBOR ONE (가상 컨테이너선)',cargoSource:$('#dataSource')?.textContent??'',
   status:complete()?'작업 완료':state.removed.length===MAX_STEPS?'하역 완료 · 평형수 조정 마무리 중':'작업 중간 기록',
   conditions:{strategy:strategy==='predictive'?'60초 예측 기반 탐색':'현재 상태 기반 규칙',unloadIntervalS:config.interval,pumpRateTps:config.rate,thresholdDeg:config.threshold,
@@ -355,11 +366,12 @@ function aiReportData(){
 }
 // ⑤ Apply an AI-extracted manifest: [bay,row,tier,weight,order,label] on the 6×4×3 demo grid.
 function manifestPreview(items){
+ if(!Array.isArray(items)||items.length>72)throw Error('적하목록은 최대 72개 화물의 배열이어야 합니다.');
  const out=[],seen=new Set(),skipped=[];
  for(const raw of items||[]){
   const [bay,row,tier,weight,order,label]=Array.isArray(raw)?raw:[raw?.bay,raw?.row,raw?.tier,raw?.weight,raw?.order,raw?.label];
-  const b=Math.round(+bay),r=Math.round(+row),t=Math.round(+tier),w=+weight,name=String(label??'').slice(0,20);
-  if(!(b>=1&&b<=6&&r>=1&&r<=4&&t>=1&&t<=3)){skipped.push(`${name||'이름 없음'}: 위치가 격자 범위 밖`);continue;}
+  const b=+bay,r=+row,t=+tier,w=+weight,name=String(label??'').slice(0,20);
+  if(!([b,r,t].every(Number.isInteger)&&b>=1&&b<=6&&r>=1&&r<=4&&t>=1&&t<=3)){skipped.push(`${name||'이름 없음'}: 위치가 격자 범위 밖`);continue;}
   if(!(w>=1&&w<=100)){skipped.push(`${name||'BAY '+b}: 중량 ${weight}톤은 1–100톤 범위 밖`);continue;}
   const slot=cargo.find(c=>c.bay===b-1&&c.row===r-1&&c.tier===t-1);
   if(seen.has(slot.id)){skipped.push(`${name||slot.id}: BAY ${b}·ROW ${r}·TIER ${t} 위치 중복`);continue;}
@@ -367,26 +379,29 @@ function manifestPreview(items){
  }
  return {items:out,skipped};
 }
-function applyManifest(items){
+function applyManifest(items,{mode='patch'}={}){
  const {items:list,skipped}=manifestPreview(items);
+ if(!['patch','listed'].includes(mode))throw Error('적하목록 적용 방식을 선택하세요.');
  if(!list.length)throw Error('적용할 수 있는 화물이 없습니다.');
+ const ids=new Set(list.map(c=>c.id));
+ if(mode==='listed')for(const it of list)for(let t=1;t<it.tier;t++)if(!list.some(v=>v.bay===it.bay&&v.row===it.row&&v.tier===t))throw Error('목록만 적재하려면 상부 화물을 지지하는 같은 칸의 하부 화물도 목록에 넣으세요. 예제 일부 수정 방식을 선택할 수도 있습니다.');
  state.running=false;originalCargo.forEach((c,i)=>Object.assign(cargo[i],c));
  for(const it of list)cargo.find(c=>c.id===it.id).weight=it.weight;
  const listed=new Set(list.map(i=>i.id)),wanted=[...list].sort((a,b)=>(a.order||1e9)-(b.order||1e9));
- const rest=cargo.filter(c=>!listed.has(c.id)).sort((a,b)=>b.tier-a.tier||a.bay-b.bay||Math.abs(a.z)-Math.abs(b.z)||a.z-b.z);
+ const rest=(mode==='listed'?[]:cargo.filter(c=>!listed.has(c.id))).sort((a,b)=>b.tier-a.tier||a.bay-b.bay||Math.abs(a.z)-Math.abs(b.z)||a.z-b.z);
  const placed=new Set(),order=[];let moved=0;
- const place=c=>{if(placed.has(c.id))return;for(const top of cargo.filter(v=>v.bay===c.bay&&v.row===c.row&&v.tier>c.tier).sort((a,b)=>b.tier-a.tier))if(!placed.has(top.id)){placed.add(top.id);order.push(top.id);moved++;}placed.add(c.id);order.push(c.id);};
+ const place=c=>{if(placed.has(c.id))return;for(const top of cargo.filter(v=>v.bay===c.bay&&v.row===c.row&&v.tier>c.tier&&(mode!=='listed'||listed.has(v.id))).sort((a,b)=>b.tier-a.tier))if(!placed.has(top.id)){placed.add(top.id);order.push(top.id);moved++;}placed.add(c.id);order.push(c.id);};
  wanted.forEach(it=>place(cargo.find(c=>c.id===it.id)));rest.forEach(place);
- initialRemoved=[];initialTime=0;placementActive=false;customOrder=order;referenceKM=Decision.makeModel(cargo).km;
+ initialRemoved=mode==='listed'?cargo.filter(c=>!ids.has(c.id)).map(c=>c.id):[];initialTime=0;placementActive=mode==='listed';customOrder=order;
  invalidateComparison();reset();$('#scenario').disabled=true;
- $('#dataSource').textContent=`AI 적하목록 변환 · ${list.length}개 반영 / 나머지 ${72-list.length}개 예제값`;
+ $('#dataSource').textContent=mode==='listed'?`AI 적하목록만 적재 · ${list.length}개 / 나머지 빈 칸 · 고정 KM`:`AI 적하목록 일부 수정 · ${list.length}개 반영 / 나머지 ${72-list.length}개 예제값 · 고정 KM`;
  event(`AI 적하목록 변환 적용 · 화물 ${list.length}개 중량·순서 반영${moved?` · 위쪽 화물 ${moved}개를 먼저 내리도록 순서 조정`:''}`);update();
  return {applied:list.length,reordered:moved,skipped};
 }
 // Read-only snapshot for QA and external prototype inspection.
 window.harborTwin={aiContext,aiWhatIf,aiReportData,manifestPreview,applyManifest,isComplete:()=>complete(),setCamera:(y=yaw,p=pitch,d=distance)=>{yaw=y;pitch=Math.max(.04,Math.min(1.25,p));distance=Math.max(90,Math.min(300,d));},snapshot:()=>({phase:complete()?'complete':state.transfer?'transfer':recommendation?'approval':'unloading',notice:state.notice,applied:state.applied,transferred:state.transferred,running:state.running,time:state.time,removed:state.removed.length,initialRemoved:[...initialRemoved],initialCount:initialCount(),initialTime,cargo:cargo.map(c=>({...c,loaded:!state.removed.includes(c.id)})),tanks:[...state.tanks],metrics:metrics(),baseline:metrics(false),config:{...config},wave:Decision.waveAt(state.time,config.wave,config.environment),instantHeel:Decision.observedHeel(metrics().heel,state.time,config.wave,config.environment),strategy,events:[...state.events],recommendation,transfer:state.transfer,history:[...state.history],risk:currentRisk(),view:state.view,deck:state.deck})};
-import { initTutorial } from './tutorial.js?v=ai1';
-import { initAssistant } from './ai-assistant.js?v=ai8';
+import { initTutorial } from './tutorial.js?v=fix1028';
+import { initAssistant } from './ai-assistant.js?v=fix1028-8';
 initAssistant();
 initTutorial({
   pause:()=>{state.running=false;update();},
