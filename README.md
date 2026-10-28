@@ -221,3 +221,7 @@ API 응답과 화면 적용값(날씨·풍속·풍향·파고·주기·파향) �
 - Windows 로컬 실행은 `start.cmd` 또는 `python observation_server.py`, `http://localhost:4175`를 사용합니다. 서버는 `.mjs`를 JavaScript로 명시해 제공합니다.
 - 별도 Render 정적 프론트도 동일 API 서버를 사용합니다. 다른 프론트 도메인을 쓰면 서버 `ALLOWED_ORIGINS`에 정확한 HTTPS 출처를 추가하세요. 이미 허용된 프론트는 `https://harbor-twin.onrender.com`입니다.
 - `node verify-ai-integration.mjs`, `python verify-ai.py`에 재현 사례와 오류·한도·CORS 검증을 추가했습니다. 핵심·상세·AI 가이드의 합계 52개 단계를 개정했습니다.
+
+## 바다 환경음
+
+파도와 간헐적인 갈매기 소리를 브라우저에서 합성합니다. 기본 켜짐·음량 18%이며, 자동 재생이 제한되면 첫 클릭 또는 키보드 조작 시 시작합니다. 상단 바다 소리 버튼과 음량 조절을 사용하세요. 설정은 브라우저에 저장하며 다른 탭에서는 일시정지합니다. 분위기용 환경음으로 실제 기상·위험 경보와 무관하며 외부 음원을 내려받지 않습니다.
