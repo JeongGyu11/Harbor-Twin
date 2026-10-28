@@ -8,7 +8,7 @@ import os, json, time, threading, urllib.request, urllib.error
 
 GROQ_URL = os.getenv('GROQ_BASE_URL', 'https://api.groq.com/openai/v1').rstrip('/') + '/chat/completions'
 KEY_NAMES = ('GROQ_API_KEY', 'GROQ_KEY', 'GROQ_API', 'GROQ_TOKEN', 'GROQ_APIKEY')
-DEFAULT_MODELS = ('llama-3.3-70b-versatile', 'openai/gpt-oss-120b')
+DEFAULT_MODELS = ('openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile')
 MAX_BODY = 60_000
 
 def api_key():
