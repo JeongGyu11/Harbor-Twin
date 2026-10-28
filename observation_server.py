@@ -3,6 +3,20 @@ import os,json,math,datetime,urllib.request,urllib.parse,urllib.error,sqlite3,th
 from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
 from pathlib import Path
 import ai_assistant
+import ipaddress
+
+def client_ip(handler):
+ # Forwarded headers are ignored unless a trusted proxy hop count is explicitly configured.
+ hops=max(0,int(os.getenv("TRUST_PROXY_HOPS","0")))
+ chain=handler.headers.get("X-Forwarded-For","").split(",")
+ candidate=chain[-hops].strip() if hops and len(chain)>=hops else handler.client_address[0]
+ try:return str(ipaddress.ip_address(candidate))
+ except ValueError:return handler.client_address[0]
+
+_selected_slots=threading.BoundedSemaphore(2)
+_selected_limiter=ai_assistant.RateLimiter(per_ip=8,global_limit=24)
+_selected_cache={}
+_selected_lock=threading.Lock()
 KST=datetime.timezone(datetime.timedelta(hours=9))
 PORTS={'busan':(35.05,129.12),'busanNew':(35.04,128.81),'incheon':(37.42,126.5),'ulsan':(35.43,129.43),'gwangyang':(34.9,127.72),'pyeongtaek':(36.97,126.78),'pohang':(36.10,129.45)}
 def distance(a,b):
@@ -159,8 +173,10 @@ def weather_upstream():
  params={'latitude':','.join(str(p[0]) for p in PORTS.values()),'longitude':','.join(str(p[1]) for p in PORTS.values()),'current':'weather_code,temperature_2m,wind_speed_10m,wind_direction_10m,is_day','wind_speed_unit':'ms','timezone':'Asia/Seoul'}
  url='https://api.open-meteo.com/v1/forecast?'+urllib.parse.urlencode(params)
  try:
-  with urllib.request.urlopen(url,timeout=30) as r:data=json.loads(r.read(3_000_000))
- except Exception:raise ValueError('Open-Meteo 날씨 수집 통신 실패') from None
+  request=urllib.request.Request(url,headers={'User-Agent':'HarborTwin/1.1 (forecast collector)','Accept':'application/json'})
+  with urllib.request.urlopen(request,timeout=30) as r:data=json.loads(r.read(3_000_000))
+ except urllib.error.HTTPError as e:raise ValueError('Open-Meteo 예보 HTTP '+str(e.code)+' · 실제 관측 수집과 별개') from None
+ except Exception:raise ValueError('Open-Meteo 예보 통신 실패 · 이전 정상값 유지 · 실제 관측과 별개') from None
  if not isinstance(data,list) or len(data)!=len(PORTS):raise ValueError('항구별 날씨 응답 수 불일치')
  return data
 
@@ -327,13 +343,14 @@ def collect_actual_weather_once(store):
  store.prune()
 
 class Handler(SimpleHTTPRequestHandler):
+ extensions_map={**SimpleHTTPRequestHandler.extensions_map,".mjs":"text/javascript",".js":"text/javascript",".css":"text/css"}
  def log_message(self,*args):pass
  def do_GET(self):
   url=urllib.parse.urlsplit(self.path)
   if not url.path.startswith('/api/'):
    return super().do_GET()
   origin=self.headers.get('Origin','')
-  allowed=['http://127.0.0.1:4174','http://localhost:4174','http://127.0.0.1:4175','http://localhost:4175']+[v for v in os.getenv('ALLOWED_ORIGINS','').split(',') if v]
+  allowed=['http://127.0.0.1:4174','http://localhost:4174','http://127.0.0.1:4175','http://localhost:4175','https://harbor-twin.onrender.com']+[v for v in os.getenv('ALLOWED_ORIGINS','').split(',') if v]
   same_origin=origin in ['http://'+self.headers.get('Host',''),'https://'+self.headers.get('Host','')]
   if origin and origin not in allowed and not same_origin:self.send_error(403);return
   status=200;store=self.server.store
@@ -354,8 +371,19 @@ class Handler(SimpleHTTPRequestHandler):
      if result is None:status=503;result={'error':'저장된 실제 날씨 관측이 없습니다.'}
    elif url.path=='/api/observations/selected':
     params=urllib.parse.parse_qs(url.query)
-    try:result=selected_observations(params.get('port',[''])[0],params.get('time',[''])[0])
-    except ValueError as e:status=400;result={'error':str(e)}
+    cache_key=(params.get('port',[''])[0],params.get('time',[''])[0])
+    with _selected_lock:cached=_selected_cache.get(cache_key)
+    if cached and time.monotonic()-cached[0]<60:result=cached[1]
+    elif not _selected_limiter.allow(client_ip(self)):status=429;result={'error':'관측 조회가 많습니다. 잠시 후 다시 시도하세요.'}
+    elif not _selected_slots.acquire(blocking=False):status=429;result={'error':'관측 조회 처리 중입니다. 잠시 후 다시 시도하세요.'}
+    else:
+     try:
+      result=selected_observations(*cache_key)
+      with _selected_lock:
+       if len(_selected_cache)>=64:_selected_cache.pop(next(iter(_selected_cache)))
+       _selected_cache[cache_key]=(time.monotonic(),result)
+     except ValueError as e:status=400;result={'error':str(e)}
+     finally:_selected_slots.release()
    elif url.path=='/api/ai/status':result=ai_assistant.status()
    elif url.path=='/api/observations/status':result={'configured':bool(get_key()),'collector':'server-background','intervalSeconds':300,'ports':store.status(),'weatherPorts':store.weather_status()}
    elif url.path=='/api/weather/status':result={'collector':'server-background','intervalSeconds':300,'sourceType':'model_forecast','ports':store.weather_status()}
@@ -379,7 +407,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 def _origin_ok(handler):
  origin=handler.headers.get('Origin','')
- allowed=['http://127.0.0.1:4174','http://localhost:4174','http://127.0.0.1:4175','http://localhost:4175']+[v for v in os.getenv('ALLOWED_ORIGINS','').split(',') if v]
+ allowed=['http://127.0.0.1:4174','http://localhost:4174','http://127.0.0.1:4175','http://localhost:4175','https://harbor-twin.onrender.com']+[v for v in os.getenv('ALLOWED_ORIGINS','').split(',') if v]
  same_origin=origin in ['http://'+handler.headers.get('Host',''),'https://'+handler.headers.get('Host','')]
  return origin,(not origin) or origin in allowed or same_origin
 
@@ -395,13 +423,24 @@ def _do_post(self):
  try:length=int(self.headers.get('Content-Length','0'))
  except ValueError:length=0
  if length<=0 or length>ai_assistant.MAX_BODY:return reply(413,{'error':'요청이 너무 큽니다.'})
- ip=(self.headers.get('X-Forwarded-For','').split(',')[0].strip() or self.client_address[0])
+ ip=client_ip(self)
  if not ai_assistant.limiter.allow(ip):return reply(429,{'error':'요청이 많습니다. 잠시 후 다시 시도하세요.'})
+ self.connection.settimeout(10)
  try:body=json.loads(self.rfile.read(length).decode('utf-8'))
  except Exception:return reply(400,{'error':'잘못된 요청 형식'})
- status,result=ai_assistant.complete(body if isinstance(body,dict) else {})
+ try:status,result=ai_assistant.complete(body)
+ except Exception:status,result=502,{'error':'AI 응답 처리 실패 · 시뮬레이션은 유지됩니다.'}
  reply(status,result)
 Handler.do_POST=_do_post
+
+def _do_options(self):
+ origin,ok=_origin_ok(self)
+ self.send_response(204 if ok else 403)
+ if ok and origin:
+  self.send_header('Access-Control-Allow-Origin',origin);self.send_header('Vary','Origin')
+  self.send_header('Access-Control-Allow-Methods','GET, POST, OPTIONS');self.send_header('Access-Control-Allow-Headers','Content-Type')
+ self.send_header('Content-Length','0');self.end_headers()
+Handler.do_OPTIONS=_do_options
 
 def main():
  root=Path(__file__).resolve().parent

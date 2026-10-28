@@ -1,0 +1,37 @@
+import * as Placement from './dist/placement-model.mjs';
+import * as Decision from './dist/decision.mjs';
+import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
+const full=fs.readFileSync('dist/app.js','utf8').replace(/^\uFEFF/,'');const html=fs.readFileSync('dist/index.html','utf8');
+const ids=[...html.matchAll(/id="([^"]+)"/g)].map(m=>m[1]);const core=full.split('// Shared vessel coordinates')[0].replace(/import [^\n]+\n/g,'');const handlers=full.slice(full.indexOf("$('#play').onclick="),full.indexOf('const precipitationStatus='));
+function setup(){const nodes=Object.fromEntries(ids.map(id=>[id,{textContent:'',innerHTML:'',checked:false,disabled:false,value:'port',style:{},classList:{toggle(){},add(){},remove(){}},close(){}}]));const ctx=vm.createContext({Decision,Placement,environmentUI:{restore(){}},setView(){},setDeck(){},initWorkspaceUI(){},renderPrecipitationStatus(){},document:{querySelector:s=>s.startsWith('#')?nodes[s.slice(1)]??null:null,querySelectorAll:()=>[]},updateModel(){},drawPlan(){},toast(){},modelInfo(){}});vm.runInContext(core,ctx);vm.runInContext(handlers,ctx);vm.runInContext("strategy='rule';state.scenario='port';config.wave='off';reset()",ctx);return {nodes,run:s=>vm.runInContext(s,ctx)};}
+
+const load=()=>{const t=setup();t.run('initDecisionUI()');t.run(full.slice(full.indexOf('const r2='),full.indexOf('// Read-only snapshot')));return t;};
+const t=load(),near=(a,b)=>assert.ok(Math.abs(a-b)<1e-8);
+const km=t.run('referenceKM');
+t.run('applyManifest(cargo.filter(c=>c.tier===2).map(c=>[c.bay+1,c.row+1,3,100,0,c.id]))');
+near(t.run('referenceKM'),km);assert.ok(t.run('metrics().gm')<1);
+t.nodes.restorePlan.onclick();near(t.run('referenceKM'),km);near(t.run('metrics().gm'),2.4);
+t.run('config.environment={source:"사용자 직접 입력",port:"부산",localTime:"2026-10-28T20:00",wind:20,windDirection:90,height:1,period:8,direction:90,heading:0,weather:"clear"}');
+assert.equal(t.run('aiContext().operationAssessment.label'),'중지 검토');
+assert.equal(t.run('aiWhatIf({wind_speed:20}).operationAssessment.label'),'중지 검토');
+assert.equal(t.run('aiWhatIf({wind_speed:5}).conditions.windMps'),5);assert.equal(t.run('config.environment.wind'),20);
+assert.ok(t.run('aiWhatIf({wind_speed:120}).error'));assert.equal(t.run('config.environment.wind'),20);
+assert.ok(t.run('aiWhatIf({transfer_from:"P-A"}).error'));
+t.run('config.environment=null');
+const x=t.run('aiWhatIf({transfer_from:"P-A",transfer_to:"S-A",transfer_amount:200})');
+assert.equal(x.evaluatedTransferAssessment.label,'중지 검토');assert.match(x.modelVerdict,/중지 검토/);
+assert.equal(t.run('aiContext().operationAssessment.label'),'자료 부족 · 판정 보류');
+const before=t.run('JSON.stringify([cargo,state,config,referenceKM])');
+assert.throws(()=>t.run('applyManifest([[1,1,3,25,1,"top"]],{mode:"listed"})'),/하부/);
+assert.equal(t.run('JSON.stringify([cargo,state,config,referenceKM])'),before);
+t.run('applyManifest([[1,1,1,25,1,"lower"]],{mode:"listed"})');
+assert.equal(t.run('initialCount()'),1);assert.equal(t.run('state.removed.length'),71);near(t.run('referenceKM'),km);
+assert.equal(t.run('manifestPreview([[1.4,1,1,25,1,"bad"]]).items.length'),0);
+assert.throws(()=>t.run('manifestPreview({bad:true})'),/배열/);
+assert.equal(t.run('aiReportData().unloading.containersTotal'),1);
+assert.ok(fs.readFileSync('dist/ai-assistant.js','utf8').includes('AbortController'));
+assert.ok(fs.readFileSync('dist/ai-assistant.js','utf8').includes('반복 한도'));
+assert.ok(!fs.readFileSync('dist/ai-assistant.js','utf8').includes('environment/latest?'));
+const guide=fs.readFileSync('dist/tutorial.js','utf8');assert.ok(guide.includes('목록만 적재'));assert.ok(guide.includes('생성 당시'));assert.ok(!guide.includes('학습된 AI 모델은 아직 적용되지 않았습니다'));
+console.log('PASS fixed KM imports, unified wind/forecast policy, requested transfer verdict, missing data hold, manifest modes/support/integer validation, immutable failure, report facts, cancellation and revised guide');
+

@@ -4,7 +4,12 @@ services:
     ports:
       - "8000:8000"
     environment:
-      KMA_API_KEY: ${KMA_API_KEY:?Set KMA_API_KEY on server}
+      KMA_API_KEY: ${KMA_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AI_DAILY_LIMIT: ${AI_DAILY_LIMIT:-500}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-0}
     volumes:
       - observations:/data
     restart: unless-stopped

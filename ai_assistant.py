@@ -5,7 +5,7 @@ assistant roles (briefing, risk guidance, chat with what-if tool, work log,
 weather check explanation, manifest extraction).
 Numbers always come from the physics model in the browser; the LLM explains them.
 """
-import os, json, time, threading, urllib.request, urllib.error
+import os, json, time, threading, urllib.request, urllib.error, re, hashlib, datetime
 
 GROQ_BASE = os.getenv('GROQ_BASE_URL', 'https://api.groq.com/openai/v1').rstrip('/')
 GEMINI_BASE = os.getenv('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta/openai').rstrip('/')
@@ -57,7 +57,7 @@ def gemini_models():
     found = []
     try:
         req = urllib.request.Request(GEMINI_BASE + '/models', headers={'Authorization': 'Bearer ' + key})
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=5) as r:
             data = json.loads(r.read(400_000))
         found = [str(m.get('id', '')).replace('models/', '') for m in data.get('data', [])]
     except Exception as e:
@@ -189,9 +189,14 @@ class RateLimiter:
     def __init__(self, per_ip=20, global_limit=90, window=60):
         self.per_ip, self.global_limit, self.window = per_ip, global_limit, window
         self.hits, self.lock = {}, threading.Lock()
+        self.day, self.day_hits = None, 0
+        self.daily_limit = max(1, int(os.getenv('AI_DAILY_LIMIT', '500')))
     def allow(self, ip):
         now = time.time()
         with self.lock:
+            day = int(now // 86400)
+            if self.day != day:self.day,self.day_hits=day,0
+            if self.day_hits >= self.daily_limit:return False
             for k in list(self.hits):
                 self.hits[k] = [t for t in self.hits[k] if now - t < self.window]
                 if not self.hits[k]:
@@ -201,6 +206,7 @@ class RateLimiter:
             if len(mine) >= self.per_ip or total >= self.global_limit:
                 return False
             mine.append(now)
+            self.day_hits += 1
             return True
 
 limiter = RateLimiter()
@@ -220,11 +226,8 @@ def _retry_after(err, detail):
 def status():
     key, name = api_key()
     gkey, gname = gemini_key()
-    return {'configured': bool(key or gkey), 'keyName': name, 'models': list(models()) if key else [],
-            'fallback': {'provider': 'gemini', 'configured': bool(gkey), 'keyName': gname, 'models': list(gemini_models()) if gkey else [],
-                         'temporarilyUnusable': _unusable.get('gemini', 0) > time.time()},
-            'groqQuota': _quota,
-            'roles': list(PROMPTS)}
+    return {'configured': bool(key or gkey), 'providers': [p for p, enabled in [('groq', bool(key)), ('gemini', bool(gkey))] if enabled], 'roles': list(PROMPTS), 'policyVersion': 'fix1028-v1', 'requestBudgetSeconds': 35}
+
 
 def _flatten_tools(messages):
     """For providers that need provider-specific tool-call state (Gemini thought signatures),
@@ -242,7 +245,9 @@ def _flatten_tools(messages):
 
 def _clean_messages(raw):
     out = []
-    for m in (raw or [])[-14:]:
+    recent = list(raw or [])[-14:]
+    while recent and recent[0].get('role') != 'user':recent.pop(0)
+    for m in recent:
         role = m.get('role')
         if role == 'user':
             out.append({'role': 'user', 'content': str(m.get('content', ''))[:1500]})
@@ -270,7 +275,7 @@ def _note_quota(provider, model, headers):
     if q:
         _quota[model] = {**{k.lower(): v for k, v in q.items()}, 'seenAt': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}
 
-def complete(body):
+def _complete_provider(body, deadline):
     """Returns (status, payload)."""
     attempts = providers()
     if not attempts:
@@ -278,8 +283,8 @@ def complete(body):
     role = body.get('role')
     if role not in PROMPTS:
         return 400, {'error': '지원하지 않는 AI 역할입니다.'}
-    context = json.dumps(body.get('context') or {}, ensure_ascii=False, separators=(',', ':'))[:9000]
-    messages = [{'role': 'system', 'content': PROMPTS[role] + '\n\n현재 시뮬레이션 상태 JSON:\n' + context}]
+    context = json.dumps(body.get('context') or {}, ensure_ascii=False, separators=(',', ':'))
+    messages = [{'role': 'system', 'content': PROMPTS[role] + OUTPUT_POLICY + '\n\n현재 시뮬레이션 상태 JSON:\n' + context}]
     if role == 'manifest':
         text = str(body.get('manifest') or '').strip()[:6000]
         if len(text) < 10:
@@ -315,11 +320,14 @@ def complete(body):
             body_out['reasoning_effort'] = 'low'
             body_out['max_tokens'] = payload['max_tokens'] + 1400  # Gemini counts thinking inside the output budget
         for attempt in (1, 2):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.2:
+                return 504, {'error': 'AI 응답 시간이 초과됐습니다. 시뮬레이션은 유지됩니다. 다시 요청하세요.'}
             req = urllib.request.Request(base + '/chat/completions', data=json.dumps(body_out, ensure_ascii=False, separators=(',', ':')).encode(),
                                          headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json',
                                                   'User-Agent': 'harbor-twin/1.0'}, method='POST')
             try:
-                with urllib.request.urlopen(req, timeout=40) as r:
+                with urllib.request.urlopen(req, timeout=min(12, remaining)) as r:
                     data = json.loads(r.read(400_000))
                     _note_quota(provider, model, r.headers)
                 choice = (data.get('choices') or [{}])[0].get('message', {})
@@ -350,7 +358,7 @@ def complete(body):
                     busy_wait.append(wait)
                     # Only wait on the last provider; otherwise hand over to the fallback right away.
                     later = [p for p, *_ in attempts[attempts.index((provider, base, key, model)) + 1:] if p != provider and p not in dead]
-                    if attempt == 1 and wait <= 8 and not later:
+                    if attempt == 1 and wait <= 3 and not later and wait + 1 < deadline - time.monotonic():
                         time.sleep(wait + 0.3)  # per-minute limit frees up within seconds
                         continue
                     skipped.append((model, 429))
@@ -368,4 +376,120 @@ def complete(body):
         secs = max(3, min(60, round(min(busy_wait))))
         return 429, {'error': f'지금 AI 사용이 몰려 잠시 쉬고 있어요. {secs}초 뒤 자동으로 다시 시도할게요.', 'retryAfter': secs}
     print(f'[ai] all providers failed: {skipped}', flush=True)
-    return 502, {'error': '사용 가능한 AI 모델을 찾지 못했습니다.', 'detail': str(last_error)[:300], 'attempts': [f'{m}:{c}' for m, c in skipped]}
+    return 502, {'error': 'AI 서비스가 일시적으로 응답하지 않습니다. 시뮬레이션은 유지됩니다. 잠시 후 다시 요청하세요.'}
+
+
+# Generated prose never owns numerical facts, units or the operational verdict.
+# Facts are rendered directly from the model in the browser; unsafe prose is replaced.
+OUTPUT_POLICY = """
+최종 출력 제한(앞의 형식 요청보다 우선):
+- 설명에는 숫자, 숫자로 된 번호 목록, 시간, 수치 단위, 탱크 영문 ID를 쓰지 마세요. 수치는 화면의 원본 표가 담당합니다.
+- 숫자가 필요한 부분은 '기록 표의 값', '현재 시연 한도', '추천 탱크'로 표현하세요. 목록은 • 기호를 사용하세요.
+- '안전합니다', '괜찮아요', '계속 진행해도 됩니다', '안전 기준 만족' 같은 보증·운전 허가 표현을 쓰지 마세요.
+- operationAssessment의 판정 등급을 바꾸지 마세요. 자료 부족이면 보류와 확인을 안내하세요.
+- 가상 도구에서 evaluatedTransferAssessment가 있으면 사용자가 요청한 이송안의 판정을 우선 설명하세요.
+- 보고서에서도 수치·단위를 반복하지 말고 기록의 의미와 검토할 항목만 서술하세요.
+"""
+
+_prose_cache = {}
+_cache_lock = threading.Lock()
+_slots = threading.BoundedSemaphore(3)
+
+def _validate_body(body):
+    if not isinstance(body, dict) or body.get('role') not in PROMPTS:
+        return '지원하지 않는 AI 역할입니다.'
+    if not isinstance(body.get('context', {}), dict):
+        return '상태 정보는 객체 형식이어야 합니다.'
+    if len(json.dumps(body.get('context', {}), ensure_ascii=False)) > 16000:
+        return '상태 기록이 너무 깁니다. 새 작업이나 대화로 다시 요청하세요.'
+    if body.get('role') == 'manifest':
+        text = body.get('manifest')
+        if not isinstance(text, str) or not 10 <= len(text.strip()) <= 6000:
+            return '적하목록은 10–6000자로 입력하세요. 긴 목록은 나누어 검토하세요.'
+    if body.get('role') == 'chat':
+        messages = body.get('messages')
+        if not isinstance(messages, list) or not 1 <= len(messages) <= 40:
+            return '대화 목록 형식 또는 길이를 확인하세요. 새 대화를 시작할 수 있습니다.'
+        for msg in messages:
+            if not isinstance(msg, dict) or msg.get('role') not in ('user', 'assistant', 'tool'):
+                return '대화 항목 형식을 확인하세요.'
+            if msg.get('content') is not None and not isinstance(msg.get('content'), str):
+                return '대화 내용은 문자열이어야 합니다.'
+            if 'tool_calls' in msg:
+                calls = msg['tool_calls']
+                if not isinstance(calls, list) or len(calls) > 3:
+                    return '가상 도구 호출 형식을 확인하세요.'
+                for call in calls:
+                    if not isinstance(call, dict) or not isinstance(call.get('function'), dict) or not isinstance(call['function'].get('arguments', '{}'), str):
+                        return '가상 도구 인자 형식을 확인하세요.'
+    return None
+
+def _assessment(body):
+    assessment = body.get('context', {}).get('operationAssessment') or {}
+    if body.get('role') == 'chat':
+        for msg in reversed(body.get('messages', [])):
+            if msg.get('role') == 'tool':
+                try:
+                    data = json.loads(msg.get('content', '{}'))
+                    assessment = data.get('evaluatedTransferAssessment') or data.get('operationAssessment') or assessment
+                except (ValueError, TypeError, AttributeError):
+                    pass
+                break
+    return assessment if isinstance(assessment, dict) else {}
+
+def guard_prose(role, content):
+    forbidden = r'안전(?:합니다|해요|하다|한\s*(?:상태|작업|하역)|\s*기준)|괜찮(?:아요|습니다)|계속\s*(?:하역|진행).*?(?:돼|됩|가능)|시속|초속|[0-9０-９]|(?:m/s|km/h|mps|톤/초)'
+    if not re.search(forbidden, content, re.I):
+        return content, False
+    if role == 'report':
+        return ('[작업 개요]\n작업 상태와 적용 조건은 위 기록 표를 확인하세요.\n'
+                '[주요 경과]\n하역과 승인 이력은 아래 주요 기록 원문에 보존되어 있어요.\n'
+                '[결과 평가]\n기울기와 이송량은 가정 모델의 기록이며 실제 선박의 운전 허가를 뜻하지 않아요.\n'
+                '[방식 비교]\n비교 표에 기록된 결과만 사용하고 서로 다른 조건의 결과를 섞지 마세요.\n'
+                '[다음 작업 제안]\n• 적용 출처와 시각을 다시 확인하세요.\n• 추천 방향과 탱크 수량을 담당자가 검토하세요.'), True
+    return ('현재 적용 조건의 판정과 수치는 원본 표를 확인하세요. 기상·기울기·탱크 조건을 함께 검토하고 '
+            '주의 또는 중지 검토일 때는 작업을 일시정지하고 조건과 추천안을 다시 확인하세요. '
+            '이 결과는 시연용 가정 모델이며 실제 운전 여부는 담당자와 승인 자료로 판단해야 해요.'), True
+
+def complete(body):
+    error = _validate_body(body)
+    if error:
+        return 400, {'error': error}
+    role = body['role']
+    cacheable = role in ('briefing', 'risk', 'weather', 'report')
+    stable = json.loads(json.dumps(body))
+    stable.get('context', {}).pop('generatedAt', None)
+    if isinstance(stable.get('context', {}).get('unloading'), dict):stable['context']['unloading'].pop('elapsed', None)
+    key = hashlib.sha256(json.dumps(stable, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    with _cache_lock:
+        cached = _prose_cache.get(key)
+        if cacheable and cached and time.monotonic() - cached[0] < 30:
+            return 200, {**cached[1], 'cached': True}
+    if not _slots.acquire(blocking=False):
+        return 429, {'error': 'AI 작업이 진행 중입니다. 잠시 후 다시 요청하세요.', 'retryAfter': 5}
+    try:
+        code, result = _complete_provider(body, time.monotonic() + 35)
+        if code == 200:
+            if role != 'manifest' and result.get('content'):
+                content, guarded = guard_prose(role, result['content'])
+                assessment = _assessment(body)
+                if assessment.get('level', 0) > 0 and re.search(r'문제(?:가)?\s*없|하역\s*정상|계속\s*(?:해도|진행|하역)|시연\s*기준\s*내', content):
+                    content, guarded = guard_prose(role, '안전합니다')
+                result['content'], result['guarded'] = content, guarded
+            a = _assessment(body)
+            result.update(generatedAt=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                          assessmentLabel=a.get('label'), assessmentScope=a.get('scope'),
+                          qualityChecked=True)
+            if cacheable:
+                with _cache_lock:
+                    for k in list(_prose_cache):
+                        if time.monotonic() - _prose_cache[k][0] >= 30:
+                            del _prose_cache[k]
+                    if len(_prose_cache) >= 128:
+                        _prose_cache.pop(next(iter(_prose_cache)))
+                    _prose_cache[key] = (time.monotonic(), dict(result))
+        return code, result
+    except Exception:
+        return 502, {'error': 'AI 응답을 처리하지 못했습니다. 시뮬레이션은 유지됩니다. 다시 요청하세요.'}
+    finally:
+        _slots.release()
