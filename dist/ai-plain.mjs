@@ -24,6 +24,7 @@ export function plainText(input){
  t=t.replace(/((?:[가-힣]+\s){0,2}[가-힣]*탱크(?:\s?\([PS]-[FA]\))?)\s*(?:→|->|=>)\s*((?:[가-힣]+\s){0,2}[가-힣]*탱크(?:\s?\([PS]-[FA]\))?)/g,'$1에서 $2로'); // named tanks
  t=t.replace(/탱크(\s?\([PS]-[FA]\))?로로/g,'탱크$1로');
  t=t.replace(/\s*(?:→|->|=>)\s*/g,', 그러면 ');                   // other arrows
+ t=t.replace(/(로|에서|으로)\s+\1(?=\s|$)/g,'$1');                // duplicated particles
  t=t.replace(/±\s*/g,'');
  t=t.replace(/(\d)\s*°/g,'$1도');
  t=t.replace(/(\d)\s*t\b/g,'$1톤');

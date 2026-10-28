@@ -1,7 +1,7 @@
 // AI 평형수 조정 보조 (Groq LLM via our server). Numbers come from the physics model;
 // the LLM only explains, guides and answers. Three surfaces:
 //  ① briefing card in the 균형 조정 panel  ⑥ response card in the risk panel  ② ship mascot chat.
-import {plainText} from './ai-plain.mjs?v=plain3';
+import {plainText} from './ai-plain.mjs?v=plain4';
 const $=s=>document.querySelector(s);
 const API=(['localhost','127.0.0.1'].includes(location.hostname)&&location.port==='4174'?'http://127.0.0.1:4175':'')+'/api/ai';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
