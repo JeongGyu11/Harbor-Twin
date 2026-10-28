@@ -14,7 +14,7 @@ if(view){
  const btn=document.createElement('button');btn.type='button';btn.id='fullscreenToggle';btn.title='전체화면 (F)';btn.setAttribute('aria-label','전체화면');btn.textContent='⛶';
  $('.view-controls')?.prepend(btn);
  const toolbarBtn=document.createElement('button');toolbarBtn.type='button';toolbarBtn.id='fullscreen-simulation';toolbarBtn.className='outline-btn';toolbarBtn.textContent='전체화면 ⛶';
- const placeToolbar=()=>{const expand=$('#expand-simulation');if(expand&&!toolbarBtn.isConnected)expand.after(toolbarBtn);};placeToolbar();setTimeout(placeToolbar,500);
+ const placeToolbar=()=>{if(toolbarBtn.isConnected)return;const expand=$('#expand-simulation'),toolbar=$('.stage-toolbar');if(expand)expand.after(toolbarBtn);else toolbar?.append(toolbarBtn);};placeToolbar();setTimeout(placeToolbar,500);
  const text=id=>$(id)?.textContent?.trim()??'';
  let timer=null;
  const sync=()=>{
