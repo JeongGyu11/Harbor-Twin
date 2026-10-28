@@ -178,7 +178,8 @@ def status():
     key, name = api_key()
     gkey, gname = gemini_key()
     return {'configured': bool(key or gkey), 'keyName': name, 'models': list(models()) if key else [],
-            'fallback': {'provider': 'gemini', 'configured': bool(gkey), 'keyName': gname, 'models': list(gemini_models()) if gkey else []},
+            'fallback': {'provider': 'gemini', 'configured': bool(gkey), 'keyName': gname, 'models': list(gemini_models()) if gkey else [],
+                         'temporarilyUnusable': _unusable.get('gemini', 0) > time.time()},
             'roles': list(PROMPTS)}
 
 def _flatten_tools(messages):
@@ -215,6 +216,8 @@ def _clean_messages(raw):
                         'content': str(m.get('content', ''))[:6000]})
     return out
 
+_unusable = {}
+
 def complete(body):
     """Returns (status, payload)."""
     attempts = providers()
@@ -238,7 +241,13 @@ def complete(body):
     last_error = None
     skipped = []
     busy_wait = []
+    now = time.time()
+    dead = {p for p, until in _unusable.items() if until > now}
+    if dead and all(p in dead for p, *_ in attempts):
+        dead = set()  # everything marked unusable: try again rather than refusing outright
     for provider, base, key, model in attempts:
+        if provider in dead:
+            continue  # key or billing problem applies to every model of this provider
         body_out = {**payload, 'model': model}
         if provider == 'groq' and model.startswith('openai/gpt-oss'):
             body_out['reasoning_effort'] = 'low'
@@ -271,15 +280,18 @@ def complete(body):
                 if e.code in (400, 403, 404) and ('model' in detail.lower() or 'decommission' in detail.lower()):
                     skipped.append((model, e.code))
                     break  # model unavailable: try the next one
-                if e.code in (401, 403) or (e.code == 400 and 'api key' in detail.lower()):
+                if e.code in (401, 402, 403) or (e.code == 400 and 'api key' in detail.lower()) or 'credits are depleted' in detail or 'billing' in detail.lower():
+                    print(f'[ai] {provider} unusable (key/billing {e.code}); skipping this provider', flush=True)
+                    dead.add(provider)
+                    _unusable[provider] = time.time() + 600  # re-check after 10 minutes (e.g. credits added)
                     skipped.append((model, e.code))
-                    print(f'[ai] {provider} key rejected; trying next provider', flush=True)
                     break
                 if e.code == 429:
                     wait = _retry_after(e, detail)
                     busy_wait.append(wait)
                     # Only wait on the last provider; otherwise hand over to the fallback right away.
-                    if attempt == 1 and wait <= 8 and provider == attempts[-1][0]:
+                    later = [p for p, *_ in attempts[attempts.index((provider, base, key, model)) + 1:] if p != provider and p not in dead]
+                    if attempt == 1 and wait <= 8 and not later:
                         time.sleep(wait + 0.3)  # per-minute limit frees up within seconds
                         continue
                     skipped.append((model, 429))
