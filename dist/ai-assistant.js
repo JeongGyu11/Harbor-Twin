@@ -81,28 +81,30 @@ function initRiskGuide(){
 function initChat(){
  const launcher=document.createElement('button');launcher.type='button';launcher.className='harbor-launcher';launcher.setAttribute('aria-label','AI 평형수 보조 하버에게 묻기');launcher.innerHTML=`${MASCOT}<span class="hl-bubble">AI에게 물어보세요</span>`;
  const panel=document.createElement('section');panel.className='harbor-chat';panel.hidden=true;panel.setAttribute('role','dialog');panel.setAttribute('aria-label','AI 평형수 보조 채팅');
- panel.innerHTML=`<header><div class="hc-avatar">${MASCOT}</div><div><strong>하버 · AI 평형수 보조</strong><small>현재 시뮬레이션을 보고 답하고, 필요하면 가상 계산을 돌려요</small></div><button type="button" class="hc-close" aria-label="채팅 닫기">×</button></header>
+ panel.innerHTML=`<header><div class="hc-avatar">${MASCOT}</div><div><strong>하버 · AI 평형수 보조</strong><small>현재 시뮬레이션을 보고 답하고, 필요하면 가상 계산을 돌려요</small></div><button type="button" class="hc-reset" title="대화 초기화" aria-label="대화 초기화">↺ 새 대화</button><button type="button" class="hc-close" aria-label="채팅 닫기">×</button></header>
   <div class="hc-log" aria-live="polite"></div>
   <div class="hc-chips"></div>
   <form class="hc-form"><textarea rows="1" maxlength="600" placeholder="예: 풍속 20m/s면 하역 계속해도 돼?" aria-label="질문 입력"></textarea><button type="submit" aria-label="보내기">➤</button></form>
   <p class="hc-note">AI 답변은 참고용이며 수치는 가정 물리 모델 계산값입니다.</p>`;
  document.body.append(launcher,panel);
  const log=panel.querySelector('.hc-log'),form=panel.querySelector('.hc-form'),input=form.querySelector('textarea'),send=form.querySelector('button'),chips=panel.querySelector('.hc-chips');
- const history=[];let busy=false;
+ const history=[];let busy=false,session=0;
  const add=(who,html,cls='')=>{const m=document.createElement('div');m.className=`hc-msg ${who} ${cls}`;m.innerHTML=html;log.append(m);log.scrollTop=log.scrollHeight;return m;};
- add('bot',`안녕하세요, 평형수 보조 <b>하버</b>예요. 지금 하역 상황을 보고 설명하거나, "만약 바람이 세지면?" 같은 질문에 시뮬레이션을 돌려 답해 드릴게요.`);
+ const greet=()=>add('bot',`안녕하세요, 평형수 보조 <b>하버</b>예요. 지금 하역 상황을 보고 설명하거나, "만약 바람이 세지면?" 같은 질문에 시뮬레이션을 돌려 답해 드릴게요.`);
+ greet();
  const suggestions=['지금 상황 요약해줘','풍속 20m/s면 하역 계속해도 돼?','P-A에서 S-A로 200t 옮기면 어때?','다음 화물 내리면 어떻게 돼?'];
  chips.innerHTML=suggestions.map(q=>`<button type="button">${esc(q)}</button>`).join('');
  chips.querySelectorAll('button').forEach(b=>b.onclick=()=>{input.value=b.textContent;submit();});
  const submit=async()=>{
   const q=input.value.trim();if(!q||busy)return;
   if(status.configured===false){add('bot','AI 키가 서버에 설정되지 않아 지금은 답할 수 없어요.','error');return;}
-  busy=true;send.disabled=true;input.value='';input.style.height='';chips.hidden=true;
+  busy=true;send.disabled=true;input.value='';input.style.height='';chips.hidden=true;const mine=++session;
   add('user',esc(q));history.push({role:'user',content:q});
   const wait=add('bot','<span class="ai-loading"><span></span><span></span><span></span></span>','pending');
   try{
    for(let round=0;round<3;round++){
     const d=await ask('chat',{messages:history});
+    if(mine!==session)return;
     if(d.tool_calls?.length){
      history.push({role:'assistant',content:d.content||'',tool_calls:d.tool_calls});
      for(const call of d.tool_calls){
@@ -118,14 +120,16 @@ function initChat(){
     wait.classList.remove('pending');wait.innerHTML=fmt(d.content||'답변을 만들지 못했어요. 질문을 바꿔 다시 시도해 주세요.');
     break;
    }
-  }catch(e){wait.classList.remove('pending');wait.classList.add('error');wait.textContent=e.message;history.pop();}
-  finally{busy=false;send.disabled=false;log.scrollTop=log.scrollHeight;input.focus();}
+  }catch(e){if(mine!==session)return;wait.classList.remove('pending');wait.classList.add('error');wait.textContent=e.message;history.pop();}
+  finally{if(mine===session){busy=false;send.disabled=false;log.scrollTop=log.scrollHeight;input.focus();}}
  };
  const describe=a=>{const p=[];if(a.wind_speed!==undefined)p.push(`풍속 ${a.wind_speed}m/s`);if(a.wind_direction!==undefined)p.push(`풍향 ${a.wind_direction}°`);if(a.wave_height!==undefined)p.push(`파고 ${a.wave_height}m`);if(a.wave_period!==undefined)p.push(`주기 ${a.wave_period}초`);if(a.unload_interval!==undefined)p.push(`하역 간격 ${a.unload_interval}초`);if(a.transfer_from)p.push(`${a.transfer_from}→${a.transfer_to} ${a.transfer_amount??''}t`);if(a.horizon)p.push(`${a.horizon}초 예측`);return p.join(' · ')||'현재 조건';};
  form.onsubmit=e=>{e.preventDefault();submit();};
  input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();submit();}});
  input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,96)+'px';});
  const toggle=open=>{panel.hidden=!open;launcher.classList.toggle('open',open);launcher.querySelector('.hl-bubble').hidden=true;if(open)setTimeout(()=>input.focus(),50);};
+ const reset=()=>{session++;history.length=0;busy=false;send.disabled=false;log.replaceChildren();greet();chips.hidden=false;input.value='';input.style.height='';input.focus();};
+ panel.querySelector('.hc-reset').onclick=reset;
  launcher.onclick=()=>toggle(panel.hidden);panel.querySelector('.hc-close').onclick=()=>toggle(false);
  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!panel.hidden){e.stopPropagation();toggle(false);}},true);
  setTimeout(()=>launcher.querySelector('.hl-bubble')?.classList.add('show'),1500);setTimeout(()=>launcher.querySelector('.hl-bubble')?.classList.remove('show'),9000);
