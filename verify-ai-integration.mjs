@@ -7,6 +7,8 @@ function setup(){const nodes=Object.fromEntries(ids.map(id=>[id,{textContent:'',
 
 const load=()=>{const t=setup();t.run('initDecisionUI()');t.run(full.slice(full.indexOf('const r2='),full.indexOf('// Read-only snapshot')));return t;};
 const t=load(),near=(a,b)=>assert.ok(Math.abs(a-b)<1e-8);
+near(t.run('aiContext().ballastTotalT'),2400);
+near(t.run('aiContext().unloading.progressPercent'),0);
 const km=t.run('referenceKM');
 t.run('applyManifest(cargo.filter(c=>c.tier===2).map(c=>[c.bay+1,c.row+1,3,100,0,c.id]))');
 near(t.run('referenceKM'),km);assert.ok(t.run('metrics().gm')<1);

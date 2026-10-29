@@ -5,7 +5,7 @@ assistant roles (briefing, risk guidance, chat with what-if tool, work log,
 weather check explanation, manifest extraction).
 Numbers always come from the physics model in the browser; the LLM explains them.
 """
-import os, json, time, threading, urllib.request, urllib.error, re, hashlib, datetime
+import os, json, time, threading, urllib.request, urllib.error, re, hashlib, datetime, math, unicodedata
 
 GROQ_BASE = os.getenv('GROQ_BASE_URL', 'https://api.groq.com/openai/v1').rstrip('/')
 GEMINI_BASE = os.getenv('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta/openai').rstrip('/')
@@ -116,7 +116,10 @@ PROMPTS = {
         "역할: 담당자의 질문에 답합니다. 상태 JSON은 지금 시뮬레이션 화면의 값입니다.\n"
         "- '만약 ~라면'(풍속·풍향·파고·파주기·하역 간격·시연 한도를 바꾼 경우)이나 특정 이송안의 효과를 묻는 질문은 "
         "반드시 simulate_what_if 도구를 호출해 결과로 답하세요. 도구는 현재 화면을 바꾸지 않는 가상 계산입니다.\n"
-        "- 답변은 대화하듯 3~5문장으로 씁니다. 첫 문장에 결론(괜찮아요/주의가 필요해요/위험해요)을 말하고, 이유를 한두 문장, 할 일을 한두 문장으로 씁니다. 할 일이 여러 개면 짧은 번호 목록(최대 3개)만 씁니다.\n"
+        "- 질문 자체에 먼저 직접 답하세요. 개념·용어 질문은 정의와 원리, 사용법 질문은 실제 조작 순서, 현재 상태 질문은 제공된 상태, 가상 조건 질문은 도구 결과를 설명하세요. 모든 질문을 작업 허가 판정으로 바꾸지 마세요.\n"
+        "- 대화하듯 3~5문장으로 답하고, 질문과 무관한 고정 경고문·'원본 표를 확인하세요'만 반복하지 마세요. 안전 보증은 하지 말고 모델 한계는 작업 판단을 묻는 경우에만 짧게 덧붙이세요.\n"
+        "- 실제 화면 사용법: 환경 설정에서 실제 관측 조회·적용 또는 사용자 조건 적용·초기화, 적재·탱크 실험에서 배치·수량 평가와 실험안 B를 메인 3D에 적용, 운전 추천에서 추천 운전안 적용 후 시뮬레이션 시작, 결과 비교에서 동일 조건 비교를 사용합니다.\n"
+        "- 채팅과 가상 계산은 읽기 전용입니다. 화면 조건·화물·탱크를 변경하거나 이송을 실행했다고 말하지 마세요. 실제 적용은 화면의 버튼으로 사용자가 승인합니다.\n"
         "- 이 시뮬레이터와 평형수·하역 안전과 무관한 요청은 정중히 범위를 안내합니다."),
     'report': BASE + (
         "역할: 하역·평형수 작업 일지 작성. 상태 JSON은 이번 작업의 기록(조건, 결과 수치, 주요 이벤트, 방식 비교)입니다. "
@@ -284,7 +287,8 @@ def _complete_provider(body, deadline):
     if role not in PROMPTS:
         return 400, {'error': '지원하지 않는 AI 역할입니다.'}
     context = json.dumps(body.get('context') or {}, ensure_ascii=False, separators=(',', ':'))
-    messages = [{'role': 'system', 'content': PROMPTS[role] + OUTPUT_POLICY + '\n\n현재 시뮬레이션 상태 JSON:\n' + context}]
+    policy = CHAT_OUTPUT_POLICY if role == 'chat' else OUTPUT_POLICY
+    messages = [{'role': 'system', 'content': PROMPTS[role] + policy + '\n\n현재 시뮬레이션 상태 JSON:\n' + context}]
     if role == 'manifest':
         text = str(body.get('manifest') or '').strip()[:6000]
         if len(text) < 10:
@@ -303,7 +307,7 @@ def _complete_provider(body, deadline):
         payload['tool_choice'] = 'auto'
         raw = body.get('messages') or []
         latest = raw[-1] if raw else {}
-        force_tool = latest.get('role') == 'user' and bool(re.search(r'풍속|풍향|파고|파주기|파향|하역\s*간격|만약|옮기|이송|다음\s*화물|[PS]-[FA]', latest.get('content', ''), re.I))
+        force_tool = latest.get('role') == 'user' and _needs_simulation(latest.get('content', ''))
         if force_tool:payload['tool_choice'] = {'type':'function','function':{'name':'simulate_what_if'}}
     last_error = None
     skipped = []
@@ -405,6 +409,97 @@ _prose_cache = {}
 _cache_lock = threading.Lock()
 _slots = threading.BoundedSemaphore(3)
 
+CHAT_OUTPUT_POLICY = """
+대화 출력 규칙(다른 형식 지시보다 우선):
+- 사용자의 마지막 질문에 직접 답하세요. 개념 질문에는 쉬운 정의와 원리를 설명하고 시뮬레이션을 강제로 실행하지 마세요.
+- 현재 상태 JSON이나 성공한 가상 계산 결과의 숫자·단위·탱크 이름은 답변에 써도 됩니다. 수치는 소수 둘째 자리까지 반올림할 수 있습니다.
+- 사용자 질문의 가정 수치를 계산 결과로 오인하지 마세요. 조건을 바꾼 결과는 도구로 계산하고 현재 상태와 가상 결과를 구분하세요. 값이 없거나 계산에 실패하면 그 부분만 모른다고 설명하세요.
+- '위험이 없다', '안전하다', '계속 진행해도 된다'처럼 실제 운전을 보증하지 마세요. 작업 판정은 제공된 판정을 그대로 설명하세요.
+- 원본 표를 보라는 말이나 고정 경고문으로 질문에 대한 답을 대신하지 마세요. 작업 판단을 묻는 경우에만 가정 모델의 한계를 짧게 덧붙이세요.
+"""
+
+def _needs_simulation(question):
+    parameters = r'풍속|풍향|파고|파주기|파향|하역\s*간격|만약|옮기|이송|다음\s*화물|[PS]-[FA]'
+    concept = r'뭐(?:야|예요|에요|지)|무엇|뜻|정의|원리|개념|차이|사용법|왜|어디|어떻게|설명'
+    change = r'만약|라면|다면|바꾸|변경|높이|낮추|옮기면|이송하면|다음\s*화물'
+    if re.search(concept,question) and not re.search(change,question) and not re.search(r'\d',question):
+        return False
+    return bool(re.search(parameters,question,re.I))
+
+_NUMBER = re.compile(r'(?<![A-Za-z0-9])[-+]?\d+(?:,\d{3})*(?:\.\d+)?(?!\d|D\b)')
+_UNITS = {'m/s':'m/s','mps':'m/s','km/h':'km/h','톤/초':'t/s','t/s':'t/s',
+          '톤':'t','t':'t','초':'s','s':'s','도':'deg','°':'deg','미터':'m','m':'m',
+          'km':'km','mm':'mm','cm':'cm','개':'count','%':'%'}
+_UNIT_AFTER = re.compile(r'\s*(m/s|km/h|mps|톤/초|t/s|미터|톤|초|도|°|km\b|mm\b|cm\b|m\b|t\b|s\b|개|%)')
+
+def _numeric_facts(body):
+    facts = {}
+    def add(value,unit=''):
+        if isinstance(value,bool):return
+        try:number=float(value)
+        except (ValueError,TypeError):return
+        if not math.isfinite(number):return
+        values=(number,round(number,2))
+        if unit=='deg':values+=tuple(abs(v) for v in values)
+        for number in values:facts.setdefault(number,set()).add(unit)
+    def visit(value,key=''):
+        if isinstance(value,dict):
+            if isinstance(value.get('unit'),str) and value['unit'] in _UNITS:add(value.get('value'),_UNITS[value['unit']])
+            for k,v in value.items():visit(v,k)
+        elif isinstance(value,list):
+            if key in ('tanks','nextUnload'):add(len(value),'count')
+            for item in value:visit(item,key)
+        elif isinstance(value,(int,float)) and not isinstance(value,bool):
+            k=key.lower()
+            unit=('m/s' if k.endswith('mps') else 't/s' if k.endswith('tps') else
+                  'deg' if k.endswith('deg') else 'm' if k.endswith('m') else
+                  't' if k.endswith('t') or k in ('tonnes','capacity') else
+                  's' if k.endswith('s') or 'seconds' in k else
+                  '%' if k.endswith('percent') else 'count' if k.startswith('containers') else '')
+            add(value,unit)
+        elif isinstance(value,str) and key=='operatingRange':
+            for n in re.findall(r'\d+(?:\.\d+)?',value):add(n,'t')
+        elif isinstance(value,str) and key in ('localTime','observedAt','generatedAt','conditionAt','appliedAt','elapsed'):
+            for n in re.findall(r'\d+',value):add(n)
+            if key=='elapsed' and re.fullmatch(r'\d+(?::\d+){1,2}',value):
+                add(sum(int(n)*60**i for i,n in enumerate(reversed(value.split(':')))),'s')
+    context=body.get('context') or {};visit(context)
+    if isinstance(context.get('forecast60s'),dict):add(60,'s')
+    # A user's hypothetical numbers alone are not computed facts. Only successful tool results qualify.
+    for message in body.get('messages') or []:
+        if message.get('role')!='tool':continue
+        try:result=json.loads(message.get('content') or '{}')
+        except (ValueError,TypeError):continue
+        if isinstance(result,dict) and not result.get('error'):visit(result)
+    return facts
+
+def guard_chat(body,content):
+    facts=_numeric_facts(body);assessment=_assessment(body);kept=[];changed=False
+    text=unicodedata.normalize('NFKC',content).replace('−','-')
+    text=re.sub(r'(?m)^\s*\d+[.)]\s+','• ',text)
+    for sentence in re.split(r'(?<=[.!?。])\s+|\n+',text):
+        sentence=sentence.strip()
+        if not sentence:continue
+        # Mentioning a safety standard is not the same as claiming it is satisfied.
+        claims=_SAFETY_CLAIM.replace(r'\s*기준',r'\s*기준(?:을|에)?\s*(?:만족|충족)')
+        invalid=bool(re.search(claims,sentence,re.I))
+        if assessment.get('level',0)>0 or assessment.get('missing'):
+            invalid |= bool(re.search(r'(?:현재|지금|판정).*?기준\s*내(?:입니다|예요|에요|이므로)',sentence))
+        for match in _NUMBER.finditer(sentence):
+            number=float(match.group().replace(',',''));units=facts.get(number)
+            explicit=_UNIT_AFTER.match(sentence,match.end())
+            if not units or (explicit and _UNITS[explicit[1]] not in units):invalid=True
+        # Prevent a wind unit being silently rewritten as metres per hour.
+        invalid |= bool(re.search(r'시속\s*\d+(?:\.\d+)?\s*(?:m\b|미터)',sentence))
+        if invalid:changed=True
+        else:kept.append(sentence)
+    if not kept:
+        return '이 답변의 근거나 표현을 확인하지 못했어요. 궁금한 화물·탱크·조건을 구체적으로 알려주시면 다시 확인할게요.',True
+    if not changed:return text,False
+    answer='\n'.join(kept)
+    if changed:answer+='\n일부 문장은 수치 근거나 안전 단정 표현을 확인하지 못해 제외했어요.'
+    return answer,changed
+
 def _validate_body(body):
     if not isinstance(body, dict) or body.get('role') not in PROMPTS:
         return '지원하지 않는 AI 역할입니다.'
@@ -447,16 +542,19 @@ def _assessment(body):
                 break
     return assessment if isinstance(assessment, dict) else {}
 
-def guard_prose(role, content):
-    forbidden = (r'안전(?:합니다|해요|하다|한\s*(?:상태|작업|하역)|\s*기준)|괜찮(?:아요|습니다)|'
+_SAFETY_CLAIM = (r'안전(?:합니다|해요|하다|한\s*(?:상태|작업|하역)|\s*기준)|괜찮(?:아요|습니다)|'
                  r'(?:위험|리스크|문제)(?:성|요소)?(?:이|가|은|는|도)?\s*(?:전혀\s*|아무(?:런)?\s*)?없|'
                  r'(?:위험|리스크)(?:이|가|은|는)?\s*(?:제로|영)|'
                  r'위험하지\s*않|위험성(?:이|은)?\s*전무|'
                  r'걱정(?:할\s*필요|하지\s*않아도)|'
                  r'(?:계속\s*)?(?:하역|작업|진행)(?:을|를)?\s*(?:계속\s*)?(?:해도|하여도)\s*(?:돼|되|됩|괜찮)|'
                  r'계속\s*(?:하역|진행).*?(?:돼|됩|가능)|'
-                 r'(?:no\s+(?:risk|danger)|risk[- ]free|completely\s+safe)|'
-                 r'시속|초속|[0-9０-９]|(?:m/s|km/h|mps|톤/초)')
+                 r'(?:위험|리스크)(?:이|가|은|는)?\s*0(?:%|퍼센트|입니다|이에요)|'
+                 r'(?:no\s+(?:risk|danger)|zero\s+risk|risk[- ]free|completely\s+safe)')
+
+def guard_prose(role, content, body=None):
+    if role == 'chat':return guard_chat(body or {},content)
+    forbidden = _SAFETY_CLAIM + r'|시속|초속|[0-9０-９]|(?:m/s|km/h|mps|톤/초)'
     if not re.search(forbidden, content, re.I):
         return content, False
     if role == 'report':
@@ -489,14 +587,15 @@ def complete(body):
         code, result = _complete_provider(body, time.monotonic() + 35)
         if code == 200:
             if role != 'manifest' and result.get('content'):
-                content, guarded = guard_prose(role, result['content'])
+                content, guarded = guard_prose(role, result['content'], body)
                 assessment = _assessment(body)
-                if assessment.get('level', 0) > 0 and re.search(r'문제(?:가)?\s*없|하역\s*정상|계속\s*(?:해도|진행|하역)|시연\s*기준\s*내', content):
+                if role != 'chat' and assessment.get('level', 0) > 0 and re.search(r'문제(?:가)?\s*없|하역\s*정상|계속\s*(?:해도|진행|하역)|시연\s*기준\s*내', content):
                     content, guarded = guard_prose(role, '안전합니다')
-                if guarded and role != 'report' and assessment.get('label') == '시연 기준 내' and not assessment.get('missing'):
+                if guarded and role not in ('chat','report') and assessment.get('label') == '시연 기준 내' and not assessment.get('missing'):
                     content = ('현재 가정 모델의 표시 기준 이내입니다. 실제 선박의 안전을 보장하는 판정은 아닙니다. '
                                + content)
                 result['content'], result['guarded'] = content, guarded
+                result['guardMode'] = ('partial' if role == 'chat' else 'fallback') if guarded else None
             a = _assessment(body)
             result.update(generatedAt=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                           assessmentLabel=a.get('label'), assessmentScope=a.get('scope'),

@@ -14,6 +14,40 @@ class AI(unittest.TestCase):
    with self.subTest(text=text):
     out,changed=a.guard_prose('report',text);self.assertTrue(changed);self.assertNotIn('시속',out);self.assertNotIn('30',out)
  def test_good_prose_preserved(self):self.assertEqual(a.guard_prose('chat','추천 탱크의 방향과 수량을 확인하세요.'),('추천 탱크의 방향과 수량을 확인하세요.',False))
+ def test_chat_explains_concept_without_stock_warning(self):
+  answer='평형수는 배의 균형을 맞추기 위해 탱크에 넣는 물이에요. 화물을 한쪽에서 내리면 무게 분포가 달라져 반대쪽 탱크로 물을 옮겨 기울기를 줄일 수 있어요.'
+  self.assertEqual(a.guard_prose('chat',answer,{'messages':[{'role':'user','content':'평형수가 뭐야?'}]}),(answer,False))
+  neutral='안전 기준은 선박의 승인 자료로 확인해야 해요. 이 시연 모델의 기준과는 달라요.'
+  self.assertEqual(a.guard_prose('chat',neutral),(neutral,False))
+  for question in ['풍속이 뭐야?','평형수 이송의 원리가 뭐야?','왜 평형수를 이송해?']:
+   self.assertFalse(a._needs_simulation(question))
+  for question in ['풍속 20m/s면 계속해도 돼?','P-A에서 S-A로 200t 옮기면?','다음 화물 내리면?']:
+   self.assertTrue(a._needs_simulation(question))
+ def test_chat_grounded_values_and_units_survive(self):
+  body={'context':{'heelDeg':-.07,'gmM':2.4,'tanks':[{'tonnes':600}]*4,'unloading':{'containersTotal':72,'elapsed':'02:30'}}}
+  answer='지금은 좌현으로 0.07도 기울었어요. 추정 GM은 2.4m이고 탱크는 4개이며 각 600톤이에요. 전체 화물은 72개이고 150초가 지났어요.'
+  self.assertEqual(a.guard_prose('chat',answer,body),(answer,False))
+ def test_chat_removes_only_bad_sentences(self):
+  body={'context':{'gmM':2.4}}
+  text='평형수는 무게 분포를 조절하는 물이에요. 위험이 없어요. 추정 GM은 2.4m예요. 화물은 999톤이에요.'
+  out,guarded=a.guard_prose('chat',text,body)
+  self.assertTrue(guarded);self.assertIn('무게 분포',out);self.assertIn('2.4m',out)
+  self.assertNotIn('위험이 없',out);self.assertNotIn('999',out);self.assertNotIn('원본 표를 확인',out)
+ def test_chat_question_numbers_are_not_computed_results(self):
+  body={'context':{'environment':{'windMps':20}},'messages':[{'role':'user','content':'화물은 999톤인가요?'}]}
+  for text in ['화물은 999톤이에요.','화물은 20톤이에요.','풍속은 -20m/s예요.']:
+   out,changed=a.guard_prose('chat',text,body);self.assertTrue(changed);self.assertNotIn(text,out)
+ def test_chat_successful_tool_values_survive(self):
+  tool={'conditions':{'windMps':20},'withoutTransfer':{'peakWithWavesDeg':.62},'operationAssessment':{'level':2,'label':'중지 검토'}}
+  body={'messages':[{'role':'tool','content':json.dumps(tool)}]}
+  text='가상 풍속은 20m/s이고 예상 최대 기울기는 0.62도예요. 시연 기준에서 중지 검토에 해당해요.'
+  self.assertEqual(a.guard_prose('chat',text,body),(text,False))
+  body['messages'][0]['content']=json.dumps({'error':'계산 실패','peakWithWavesDeg':.62})
+  self.assertTrue(a.guard_prose('chat','예상 최대 기울기는 0.62도예요.',body)[1])
+ def test_chat_complete_preserves_relevance_with_partial_guard(self):
+  with patch.object(a,'_complete_provider',return_value=(200,{'content':'좌현은 선수를 바라볼 때 왼쪽이에요. 위험이 없어요.'})):
+   _,out=a.complete({'role':'chat','context':{},'messages':[{'role':'user','content':'좌현은 어디야?'}]})
+  self.assertIn('선수를 바라볼 때 왼쪽',out['content']);self.assertNotIn('위험이 없',out['content']);self.assertEqual(out['guardMode'],'partial')
  def test_no_absolute_safety_claim_in_any_prose_role(self):
   claims=['현재 기울기가 아주 작은 수준이라 위험이 없어요.', '위험은 전혀 없습니다.', '리스크가 없습니다.',
           '문제없이 하역할 수 있습니다.', '위험하지 않습니다.', '위험성이 전무합니다.',
@@ -106,5 +140,10 @@ class AI(unittest.TestCase):
      with urllib.request.urlopen(req,timeout=3) as response:out=json.load(response)
     self.assertTrue(out['guarded']);self.assertTrue(out['qualityChecked']);self.assertNotIn('위험이 없',out['content'])
     self.assertIn('실제 선박의 안전을 보장하는 판정은 아닙니다.',out['content'])
+    body={'role':'chat','context':{'gmM':2.4},'messages':[{'role':'user','content':'GM이 뭐야?'}]}
+    req=urllib.request.Request(base+'/api/ai/complete',data=json.dumps(body).encode(),headers={'Content-Type':'application/json'},method='POST')
+    with patch.object(a,'_complete_provider',return_value=(200,{'content':'GM은 배가 바로 서려는 성질을 나타내는 지표예요. 현재 추정 GM은 2.4m예요.'})):
+     with urllib.request.urlopen(req,timeout=3) as response:out=json.load(response)
+    self.assertFalse(out['guarded']);self.assertIn('현재 추정 GM은 2.4m',out['content']);self.assertNotIn('원본 표를 확인',out['content'])
    finally:server.shutdown();server.server_close();worker.join()
 if __name__=='__main__':unittest.main()

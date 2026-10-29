@@ -292,7 +292,8 @@ function aiContext(){
  return {
   operationAssessment:Decision.assessOperation({environment:env,risk}),generatedAt:new Date().toISOString(),
   signConvention:'기울기 음수=좌현, 양수=우현',heelDeg:r2(m.heel),instantHeelWithWavesDeg:r2(instant),gmM:r2(m.gm),thresholdDeg:config.threshold,unloadIntervalS:config.interval,pumpRateTps:config.rate,
-  unloading:{containersUnloaded:state.removed.length-initialRemoved.length,containersTotal:initialCount(),unit:'컨테이너 개수(톤 아님)',running:state.running,elapsed:fmtTime(state.time-initialTime)},
+  unloading:{containersUnloaded:state.removed.length-initialRemoved.length,containersTotal:initialCount(),progressPercent:r2((state.removed.length-initialRemoved.length)/Math.max(1,initialCount())*100),unit:'컨테이너 개수(톤 아님)',running:state.running,elapsed:fmtTime(state.time-initialTime)},
+  ballastTotalT:r2(state.tanks.reduce((sum,value)=>sum+value,0)),
   tanks:tanks.map((t,i)=>({id:t.id,name:t.name,tonnes:Math.round(state.tanks[i]),capacity:1200,operatingRange:'80-1120'})),
   nextUnload:next,
   recommendation:r?{from:tanks[r.from].id,to:tanks[r.to].id,amountT:Math.round(r.amount),predictedHeelDeg:r2(r.predicted),durationS:Math.ceil(r.duration),basis:r.settling?'하역 후 잔여 기울기 보정':r.predictive?'60초 예측 후보 비교':'현재 상태 규칙'}:null,
@@ -400,8 +401,8 @@ function applyManifest(items,{mode='patch'}={}){
 }
 // Read-only snapshot for QA and external prototype inspection.
 window.harborTwin={aiContext,aiWhatIf,aiReportData,manifestPreview,applyManifest,isComplete:()=>complete(),setCamera:(y=yaw,p=pitch,d=distance)=>{yaw=y;pitch=Math.max(.04,Math.min(1.25,p));distance=Math.max(90,Math.min(300,d));},snapshot:()=>({phase:complete()?'complete':state.transfer?'transfer':recommendation?'approval':'unloading',notice:state.notice,applied:state.applied,transferred:state.transferred,running:state.running,time:state.time,removed:state.removed.length,initialRemoved:[...initialRemoved],initialCount:initialCount(),initialTime,cargo:cargo.map(c=>({...c,loaded:!state.removed.includes(c.id)})),tanks:[...state.tanks],metrics:metrics(),baseline:metrics(false),config:{...config},wave:Decision.waveAt(state.time,config.wave,config.environment),instantHeel:Decision.observedHeel(metrics().heel,state.time,config.wave,config.environment),strategy,events:[...state.events],recommendation,transfer:state.transfer,history:[...state.history],risk:currentRisk(),view:state.view,deck:state.deck})};
-import { initTutorial } from './tutorial.js?v=ob1';
-import { initAssistant } from './ai-assistant.js?v=fix1028-8';
+import { initTutorial } from './tutorial.js?v=chat1029';
+import { initAssistant } from './ai-assistant.js?v=chat1029';
 initAssistant();
 initTutorial({
   pause:()=>{state.running=false;update();},
