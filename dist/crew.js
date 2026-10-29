@@ -25,16 +25,21 @@ const CREW=[
  {side:1,start:[-20,SIDE],look:{vest:0xf2d22e,helmet:0xff8a1f,pants:0x2c3b2f},route:[{to:[-32,SIDE]},{work:3.2},{to:[-18,SIDE]},{work:3.2},{to:[-4,SIDE]},{work:3.2}]},
  {side:-1,door:'bow',start:[48.2,-4.2],look:{vest:0xff5a3c,helmet:0xf4f4f0,pants:0x1f2a38},route:[{work:4},{look:2,face:Math.PI/2},{to:[48.2,4.2]},{work:3.5},{to:[48.2,-4.2]}]},
  {side:-1,start:[-40.8,-5],look:{vest:0x2f8fdc,helmet:0xffffff,pants:0x1d2733},route:[{look:3,face:Math.PI/2},{to:[-40.8,4.5]},{look:3,face:Math.PI/2},{to:[-40.8,-5]}]},
- {side:1,start:[-52,SIDE],look:{vest:0xff7a1a,helmet:0x2a7de1,pants:0x22344d},route:[{to:[-41,SIDE]},{look:1.8,face:0},{to:[-55,SIDE]},{look:1.8,face:0}]}
+ {side:1,start:[-52,SIDE],look:{vest:0xff7a1a,helmet:0x2a7de1,pants:0x22344d},route:[{to:[-41,SIDE]},{look:1.8,face:0},{to:[-55,SIDE]},{look:1.8,face:0}]},
+ {side:-1,start:[-54,-SIDE],look:{vest:0xf2d22e,helmet:0xf4f4f0,pants:0x22344d},route:[{to:[-41.5,-SIDE]},{look:2,face:Math.PI},{to:[-54,-SIDE]},{look:2,face:Math.PI}]},
+ {side:1,start:[-10,SIDE],look:{vest:0xff7a1a,helmet:0xf4f4f0,pants:0x2c3b2f},route:[{work:3.5},{to:[6,SIDE]},{work:3.5},{to:[-10,SIDE]}]},
+ {side:1,door:'bow',start:[47.6,6.4],look:{vest:0x2f8fdc,helmet:0xffd23a,pants:0x1d2733},route:[{look:2.5,face:Math.PI/2},{work:3},{to:[48.2,9]},{look:2,face:Math.PI/2},{to:[47.6,6.4]}]},
+ {side:1,start:[-60.5,8.6],exit:[[-56.5,11.9]],look:{vest:0xff5a3c,helmet:0xffffff,pants:0x1f2a38},route:[{look:3,face:-Math.PI/2},{to:[-61,5]},{work:3},{to:[-60.5,8.6]}]},
+ {side:-1,door:'bow',start:[41.2,-6],exit:[[41.2,-12.6],[48.4,-12.6],[48.4,-1.6]],look:{vest:0xf2d22e,helmet:0x2a7de1,pants:0x22344d},route:[{look:3,face:-Math.PI/2},{to:[41.2,6]},{look:3,face:-Math.PI/2},{to:[41.2,-6]}]}
 ];
 
 export function createCrew(THREE,ship){
  const group=new THREE.Group();group.name='crew';ship.add(group);
  const crew=CREW.map((c,i)=>{const p=person(THREE,c.look);p.g.position.set(c.start[0],DECK_Y,c.start[1]);p.g.scale.setScalar(1.4);group.add(p.g);
   return {...c,p,mode:'post',step:0,t:0,phase:i*1.3,path:[],heading:0};});
- const doorPath=m=>{if(m.door==='bow')return BOW.map(p=>[...p]);const [x,z]=[m.p.g.position.x,m.p.g.position.z],s=m.side*SIDE,path=[];
+ const doorPath=m=>{if(m.exit)return [...m.exit,...(m.door==='bow'?BOW:[[DOOR_X,m.side*SIDE],[DOOR_X,m.side*DOOR_Z]])].map(p=>[...p]);if(m.door==='bow')return BOW.map(p=>[...p]);const [x,z]=[m.p.g.position.x,m.p.g.position.z],s=m.side*SIDE,path=[];
   if(Math.abs(Math.abs(z)-SIDE)>.3)path.push([x,s]);path.push([DOOR_X,s],[DOOR_X,m.side*DOOR_Z]);return path;};
- const backPath=m=>{if(m.door==='bow')return [[...BOW[0]],[...m.start]];const s=m.side*SIDE,[sx,sz]=m.start;const path=[[DOOR_X,s],[sx,s]];if(Math.abs(Math.abs(sz)-SIDE)>.3)path.push([sx,sz]);return path;};
+ const backPath=m=>{if(m.exit){const full=[...m.exit,...(m.door==='bow'?BOW:[[DOOR_X,m.side*SIDE],[DOOR_X,m.side*DOOR_Z]])];return [...full.slice(0,-1).reverse(),m.start].map(p=>[...p]);}if(m.door==='bow')return [[...BOW[0]],[...m.start]];const s=m.side*SIDE,[sx,sz]=m.start;const path=[[DOOR_X,s],[sx,s]];if(Math.abs(Math.abs(sz)-SIDE)>.3)path.push([sx,sz]);return path;};
  const doorPos=m=>m.door==='bow'?BOW[1]:[DOOR_X,m.side*DOOR_Z];
  const pose=(m,walk,work,dt)=>{m.phase+=dt*(walk?6.5:work?3.2:1.2);const s=Math.sin(m.phase);const {legL,legR,armL,armR,torso}=m.p;
   legL.rotation.x=walk?s*.55:0;legR.rotation.x=walk?-s*.55:0;

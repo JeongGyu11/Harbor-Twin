@@ -10,7 +10,7 @@ import { createOcean } from './ocean.js?v=real1';
 import { hullPose } from './ocean-motion.mjs?v=windbands1';
 import { initEnvironment } from './environment-ui.js?v=fix1028';
 import { createSky, SUN_DIRECTION } from './sky.js?v=real1';
-import { createCrew } from './crew.js?v=crew5';
+import { createCrew } from './crew.js?v=crew10';
 import { hullMaterial, deckMaterial, containerMaterials, containerColorIndex, addShipDetails } from './ship-visuals.js?v=crew3';
 initWorkspaceUI();
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
