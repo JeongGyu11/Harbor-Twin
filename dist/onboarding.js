@@ -26,7 +26,7 @@ function build(){
   <p class="ob-eyebrow">2026 해운·항만·물류 AX 프로토타입</p>
   <h1 class="ob-title"><span>화물을 내릴수록</span><span>기우는 배,</span><span><em>AI</em>와 함께 균형을 지킵니다.</span></h1>
   <p class="ob-lead">정박 중 컨테이너를 하역하면 배의 무게중심이 바뀝니다. HARBOR TWIN은 디지털 트윈으로 기울기를 미리 계산하고, AI가 평형수 조정을 설명·안내해 담당자의 판단과 승인을 돕습니다.</p>
-  <div class="ob-actions"><button type="button" class="ob-start">▶ 바로 시작하기</button><button type="button" class="ob-guide">◈ 시작 가이드</button><button type="button" class="ob-ai">✦ AI 기능 가이드</button></div>
+  <div class="ob-actions"><button type="button" class="ob-start">▶ 바로 시작하기</button></div>
  </div>
  <div class="ob-flow" aria-label="AI 기능 6가지">${AI.map(([phase,name,desc,icon],i)=>`<article style="--i:${i}"><span class="ob-icon" aria-hidden="true">${icon}</span><small>${phase}</small><b>${name}</b><p>${desc}</p></article>`).join('')}</div>
  <footer class="ob-foot"><label><input type="checkbox" class="ob-never"> 다음부터 바로 시작</label><span>계산·판정은 물리 모델과 시연용 기준표 · AI는 설명·작성·목록 읽기 · 적용과 승인은 담당자</span><button type="button" class="ob-skip">건너뛰기 ✕</button></footer>`;
@@ -72,8 +72,6 @@ function open(){
    twin?.setCamera?.(.72,.3,175);window.dispatchEvent(new Event('resize'));after?.();},reduced?0:650);
  };
  el.querySelector('.ob-start').onclick=()=>close(()=>window.scrollTo({top:0,behavior:'auto'}));
- el.querySelector('.ob-guide').onclick=()=>close(()=>$('.tutorial-launch')?.click());
- el.querySelector('.ob-ai').onclick=()=>close(()=>$('.tutorial-ai-launch')?.click());
  el.querySelector('.ob-skip').onclick=()=>close();
  el.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();close();}});
  setTimeout(()=>el.querySelector('.ob-start').focus({preventScroll:true}),400);
