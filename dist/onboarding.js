@@ -10,18 +10,18 @@ let skip=false;try{skip=localStorage.getItem(KEY)==='skip';}catch{}
 const forced=new URLSearchParams(location.search).has('intro');
 
 const AI=[
- ['하역 전','기상 위험 판단','기상청 실제 관측으로 하역 가능 여부 판정','◐'],
+ ['하역 전','작업 조건 판정','적용한 관측·조건을 시연용 기준표로 판정, AI가 설명','◐'],
  ['하역 전','적하목록 → 하역 계획','형식이 제각각인 목록을 AI가 읽어 계획으로','▤'],
- ['하역 중','평형수 조정 브리핑','추천 이송안을 담당자용 한 줄 브리핑으로','✧'],
+ ['하역 중','평형수 조정 브리핑','추천 이송안을 담당자용 짧은 브리핑으로','✧'],
  ['하역 중','하버에게 묻기','“만약 풍속 20m/s면?” 가상 시뮬레이션 답변','⚓'],
- ['하역 중','위험 대응 안내','주의 단계에서 원인과 즉시 조치','⚠'],
+ ['하역 중','위험 대응 안내','주의 이상 단계에서 원인과 조치 안내','⚠'],
  ['하역 후','작업 일지 자동 작성','기록 수치 + AI 서술 일지 내려받기','✎']
 ];
 
 function build(){
  const el=document.createElement('section');el.className='onboard';el.setAttribute('role','dialog');el.setAttribute('aria-modal','true');el.setAttribute('aria-label','HARBOR TWIN 소개');
  el.innerHTML=`<div class="ob-shade"></div><div class="ob-bars"><i></i><i></i></div>
- <div class="ob-top"><div class="ob-brand">HARBOR <span>TWIN</span><small>MARITIME INTELLIGENCE</small></div><p class="ob-live" aria-live="polite"><span class="ob-dot"></span><span class="ob-live-text">실시간 관측 연결 중…</span></p></div>
+ <div class="ob-top"><div class="ob-brand">HARBOR <span>TWIN</span><small>MARITIME INTELLIGENCE</small></div><p class="ob-live" aria-live="polite"><span class="ob-dot"></span><span class="ob-live-text">최신 관측 불러오는 중…</span></p></div>
  <div class="ob-hero">
   <p class="ob-eyebrow">2026 해운·항만·물류 AX 프로토타입</p>
   <h1 class="ob-title"><span>화물을 내릴수록</span><span>기우는 배,</span><span><em>AI</em>와 함께 균형을 지킵니다.</span></h1>
@@ -29,17 +29,21 @@ function build(){
   <div class="ob-actions"><button type="button" class="ob-start">▶ 바로 시작하기</button><button type="button" class="ob-guide">◈ 시작 가이드</button><button type="button" class="ob-ai">✦ AI 기능 가이드</button></div>
  </div>
  <div class="ob-flow" aria-label="AI 기능 6가지">${AI.map(([phase,name,desc,icon],i)=>`<article style="--i:${i}"><span class="ob-icon" aria-hidden="true">${icon}</span><small>${phase}</small><b>${name}</b><p>${desc}</p></article>`).join('')}</div>
- <footer class="ob-foot"><label><input type="checkbox" class="ob-never"> 다음부터 바로 시작</label><span>계산·판정은 물리 모델과 기준표 · AI는 설명과 작성 · 최종 승인은 사람</span><button type="button" class="ob-skip">건너뛰기 ✕</button></footer>`;
+ <footer class="ob-foot"><label><input type="checkbox" class="ob-never"> 다음부터 바로 시작</label><span>계산·판정은 물리 모델과 시연용 기준표 · AI는 설명·작성·목록 읽기 · 적용과 승인은 담당자</span><button type="button" class="ob-skip">건너뛰기 ✕</button></footer>`;
  return el;
 }
 
+// Latest stored KMA buoy observation per port, rotating every 3 s.
+const PORTS=[['busanNew','부산항 신항'],['busan','부산항 북항'],['incheon','인천항'],['ulsan','울산항'],['gwangyang','광양항'],['pyeongtaek','평택·당진항'],['pohang','포항 영일만항']];
 function liveWeather(el){
- fetch(`${ROOT}/environment/latest?port=busanNew`,{cache:'no-store'}).then(r=>r.ok?r.json():null).then(d=>{
-  const m=d?.marine?.usable?d.marine:null;const t=el.querySelector('.ob-live-text');
-  if(!m){t.textContent='가정 모델 시뮬레이션 · 실제 관측 대기';el.querySelector('.ob-live').classList.add('off');return;}
-  const at=String(m.observedAt).slice(11,16);
-  t.textContent=`부산항 신항 실시간 · 바람 ${m.data.wind} m/s · 파고 ${m.data.height} m · 기상청 ${at} 관측`;
- }).catch(()=>{el.querySelector('.ob-live-text').textContent='가정 모델 시뮬레이션';el.querySelector('.ob-live').classList.add('off');});
+ const pill=el.querySelector('.ob-live'),text=el.querySelector('.ob-live-text');let list=[],i=0,timer=0,refresh=0;
+ const load=()=>Promise.all(PORTS.map(([key,name])=>fetch(`${ROOT}/environment/latest?port=${key}`,{cache:'no-store'}).then(r=>r.ok?r.json():null).then(d=>{const m=d?.marine?.usable?d.marine:null;return m?{name,wind:m.data.wind,height:m.data.height,at:String(m.observedAt).slice(11,16)}:null;}).catch(()=>null))).then(r=>{list=r.filter(Boolean);});
+ const show=()=>{if(!el.isConnected){clearInterval(timer);clearInterval(refresh);return;}
+  if(!list.length){text.textContent='가정 모델 시뮬레이션 · 관측 대기';pill.classList.add('off');return;}
+  const p=list[i%list.length];i++;pill.classList.remove('off');text.classList.add('swap');
+  setTimeout(()=>{text.textContent=`${p.name} 인근 · 바람 ${p.wind} m/s · 파고 ${p.height} m · 기상청 ${p.at} 관측`;text.classList.remove('swap');},reduced?0:250);};
+ load().then(()=>{show();timer=setInterval(show,3000);});
+ refresh=setInterval(load,300000);
 }
 
 function open(){

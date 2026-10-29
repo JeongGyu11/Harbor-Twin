@@ -81,3 +81,5 @@ body.onboarding-open .harbor-launcher,body.onboarding-open .harbor-chat,body.onb
  .ob-shade{background:linear-gradient(0deg,#040d16f7 0%,#040d16c4 55%,#040d1680 100%)}
 }
 @media(prefers-reduced-motion:reduce){.onboard *,.onboard{transition:none!important;animation:none!important}}
+.ob-live-text{display:inline-block;min-width:0;transition:opacity .25s ease,transform .25s ease}
+.ob-live-text.swap{opacity:0;transform:translateY(-4px)}
