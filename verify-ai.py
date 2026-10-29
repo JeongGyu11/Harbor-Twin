@@ -61,7 +61,7 @@ class AI(unittest.TestCase):
  def test_no_absolute_safety_claim_in_any_prose_role(self):
   claims=['현재 기울기가 아주 작은 수준이라 위험이 없어요.', '위험은 전혀 없습니다.', '리스크가 없습니다.',
           '문제없이 하역할 수 있습니다.', '위험하지 않습니다.', '위험성이 전무합니다.',
-          '작업을 계속해도 됩니다.', '하역해도 돼요.', '안전하게 하역을 계속할 수 있습니다.', 'There is no risk.', 'This is completely safe.']
+          '작업을 계속해도 됩니다.', '하역해도 돼요.', '안전하게 하역을 계속할 수 있습니다.', '보통 선박이 안정적으로 운항할 수 있는 수준입니다.', 'There is no risk.', 'This is completely safe.']
   for role in ['chat','weather','briefing','risk','report']:
    for text in claims:
     with self.subTest(role=role,text=text):
