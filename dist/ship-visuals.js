@@ -99,6 +99,9 @@ export function addShipDetails({ship,box,facilityMeshes,cargo}){
  const roof=add(new THREE.BoxGeometry(13,.4,23),new THREE.MeshStandardMaterial({color:0xcfd3d1,roughness:.7}),-48.5,25.1,0);facilityMeshes.push(roof);
  const mast=add(new THREE.CylinderGeometry(.25,.35,8,10),steel,-49,29,0);facilityMeshes.push(mast);
  for(const [y,w] of [[30.5,6],[32.2,4]]){const radar=add(new THREE.BoxGeometry(.4,.25,w),new THREE.MeshStandardMaterial({color:0x2a2f33,roughness:.4}),-49,y,0);radar.userData.spin=y>31?.9:-1.3;facilityMeshes.push(radar);}
+ // Engine casing: carries the funnel on the aft end of the accommodation (kept above the lifeboat).
+ const casing=add(new THREE.BoxGeometry(7.6,7.9,11.6),new THREE.MeshStandardMaterial({color:0xdfe3e1,roughness:.65}),-58.2,19.9,0);facilityMeshes.push(casing);
+ const casingTop=add(new THREE.BoxGeometry(8,.35,12),new THREE.MeshStandardMaterial({color:0xc4c9c7,roughness:.7}),-58.2,23.9,0);facilityMeshes.push(casingTop);
  const funnelMat=new THREE.MeshStandardMaterial({color:0x26323b,roughness:.55,metalness:.3});
  const funnel=add(new THREE.CylinderGeometry(3.2,3.8,9,24),funnelMat,-58,28,0);funnel.scale.z=1.5;facilityMeshes.push(funnel);
  const band=add(new THREE.CylinderGeometry(3.32,3.42,1.6,24),new THREE.MeshStandardMaterial({color:0xd7dcda,roughness:.5}),-58,29.6,0);band.scale.z=1.5;facilityMeshes.push(band);

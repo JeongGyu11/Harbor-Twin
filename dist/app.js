@@ -10,7 +10,7 @@ import { createOcean } from './ocean.js?v=real1';
 import { hullPose } from './ocean-motion.mjs?v=windbands1';
 import { initEnvironment } from './environment-ui.js?v=fix1028';
 import { createSky, SUN_DIRECTION } from './sky.js?v=real1';
-import { hullMaterial, deckMaterial, containerMaterials, containerColorIndex, addShipDetails } from './ship-visuals.js?v=real1';
+import { hullMaterial, deckMaterial, containerMaterials, containerColorIndex, addShipDetails } from './ship-visuals.js?v=funnel1';
 initWorkspaceUI();
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const state={running:false,time:0,speed:2,scenario:'balanced',view:'3d',deck:'all',exploded:false,removed:[],queue:[],tanks:[600,600,600,600],history:[],events:[],transfer:null,applied:0,selected:null,transferred:0,notice:null};
