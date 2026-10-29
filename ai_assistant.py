@@ -501,6 +501,23 @@ def guard_chat(body,content):
     if changed:answer+='\n일부 문장은 수치 근거나 안전 단정 표현을 확인하지 못해 제외했어요.'
     return answer,changed
 
+def _chat_requested_facts(body):
+    """Render requested current values independently of model prose, never hypothetical values."""
+    messages=body.get('messages') or []
+    if not messages or messages[-1].get('role')!='user':return []
+    question=messages[-1].get('content') or ''
+    if not re.search(r'지금|현재',question) or _needs_simulation(question):return []
+    context=body.get('context') or {};facts=[];summary=bool(re.search(r'요약|상황',question))
+    fields=[('heelDeg','하역 기울기','도',r'기울'),('gmM','추정 GM','m',r'GM|복원'),
+            ('ballastTotalT','평형수 총량','톤',r'평형수|탱크|총량')]
+    for key,label,unit,pattern in fields:
+        if not summary and not re.search(pattern,question,re.I):continue
+        value=context.get(key)
+        if isinstance(value,bool) or not isinstance(value,(float,int)) or not math.isfinite(value):continue
+        direction=('좌현' if value<0 else '우현' if value>0 else '중앙') if key=='heelDeg' else ''
+        facts.append({'label':label,'value':round(abs(value) if key=='heelDeg' else value,2),'unit':unit,'direction':direction})
+    return facts
+
 def _validate_body(body):
     if not isinstance(body, dict) or body.get('role') not in PROMPTS:
         return '지원하지 않는 AI 역할입니다.'
@@ -602,6 +619,7 @@ def complete(body):
             result.update(generatedAt=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                           assessmentLabel=a.get('label'), assessmentScope=a.get('scope'),
                           qualityChecked=True)
+            if role=='chat':result['contextFacts']=_chat_requested_facts(body)
             if cacheable:
                 with _cache_lock:
                     for k in list(_prose_cache):

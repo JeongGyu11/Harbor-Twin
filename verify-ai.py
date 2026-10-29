@@ -50,6 +50,14 @@ class AI(unittest.TestCase):
   with patch.object(a,'_complete_provider',return_value=(200,{'content':'좌현은 선수를 바라볼 때 왼쪽이에요. 위험이 없어요.'})):
    _,out=a.complete({'role':'chat','context':{},'messages':[{'role':'user','content':'좌현은 어디야?'}]})
   self.assertIn('선수를 바라볼 때 왼쪽',out['content']);self.assertNotIn('위험이 없',out['content']);self.assertEqual(out['guardMode'],'partial')
+ def test_requested_current_values_are_rendered_from_context(self):
+  body={'role':'chat','context':{'heelDeg':-.07,'gmM':2.4,'ballastTotalT':2400},'messages':[{'role':'user','content':'지금 기울기, GM, 평형수 총량은?'}]}
+  with patch.object(a,'_complete_provider',return_value=(200,{'content':'기울기는 무게 분포에 따라 달라져요.'})):
+   _,result=a.complete(body)
+  self.assertEqual([f['value'] for f in result['contextFacts']],[.07,2.4,2400]);self.assertEqual(result['contextFacts'][0]['direction'],'좌현')
+  body['messages']=[{'role':'user','content':'평형수가 뭐야?'}];self.assertEqual(a._chat_requested_facts(body),[])
+  body['messages']=[{'role':'user','content':'지금 풍속 20m/s로 바꾸면?'}];self.assertEqual(a._chat_requested_facts(body),[])
+  body['messages'].append({'role':'tool','content':'{}'});self.assertEqual(a._chat_requested_facts(body),[])
  def test_no_absolute_safety_claim_in_any_prose_role(self):
   claims=['현재 기울기가 아주 작은 수준이라 위험이 없어요.', '위험은 전혀 없습니다.', '리스크가 없습니다.',
           '문제없이 하역할 수 있습니다.', '위험하지 않습니다.', '위험성이 전무합니다.',
