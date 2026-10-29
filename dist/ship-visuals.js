@@ -100,7 +100,15 @@ export function addShipDetails({ship,box,facilityMeshes,cargo}){
  const mast=add(new THREE.CylinderGeometry(.25,.35,8,10),steel,-49,29,0);facilityMeshes.push(mast);
  for(const [y,w] of [[30.5,6],[32.2,4]]){const radar=add(new THREE.BoxGeometry(.4,.25,w),new THREE.MeshStandardMaterial({color:0x2a2f33,roughness:.4}),-49,y,0);radar.userData.spin=y>31?.9:-1.3;facilityMeshes.push(radar);}
  // Engine casing: carries the funnel on the aft end of the accommodation (kept above the lifeboat).
- const casing=add(new THREE.BoxGeometry(7.6,7.9,11.6),new THREE.MeshStandardMaterial({color:0xdfe3e1,roughness:.65}),-58.2,19.9,0);facilityMeshes.push(casing);
+ const casingFacade=facadeMaterials(2);
+ const casing=add(new THREE.BoxGeometry(7.6,7.9,11.6),casingFacade.faces,-58.2,19.9,0);facilityMeshes.push(casing);
+ // Bow store companionway with a door facing aft (forecastle crew uses it).
+ const comp=add(new THREE.BoxGeometry(3,4.2,3.4),new THREE.MeshStandardMaterial({color:0xdfe3e1,roughness:.65}),52.6,6.65+2.1,0);facilityMeshes.push(comp);
+ const compRoof=add(new THREE.BoxGeometry(3.3,.25,3.7),new THREE.MeshStandardMaterial({color:0xc4c9c7,roughness:.7}),52.6,6.65+4.3,0);facilityMeshes.push(compRoof);
+ // Crew doors on both sides of the accommodation (used by the deck crew animation).
+ const doorMat=new THREE.MeshStandardMaterial({color:0x3a4650,roughness:.5,metalness:.4}),frameMat=new THREE.MeshStandardMaterial({color:0xbfc5c3,roughness:.6});
+ {const bowFrame=add(new THREE.BoxGeometry(.1,3.8,2.2),frameMat,51.07,6.65+1.9,0);facilityMeshes.push(bowFrame);const bowDoor=add(new THREE.BoxGeometry(.14,3.5,1.8),doorMat,51.04,6.65+1.75,0);facilityMeshes.push(bowDoor);}
+ for(const s of [-1,1]){const frame=add(new THREE.BoxGeometry(2.2,3.8,.1),frameMat,-46,6.65+1.9,s*11.14);facilityMeshes.push(frame);const door=add(new THREE.BoxGeometry(1.8,3.5,.14),doorMat,-46,6.65+1.75,s*11.17);facilityMeshes.push(door);}
  const casingTop=add(new THREE.BoxGeometry(8,.35,12),new THREE.MeshStandardMaterial({color:0xc4c9c7,roughness:.7}),-58.2,23.9,0);facilityMeshes.push(casingTop);
  const funnelMat=new THREE.MeshStandardMaterial({color:0x26323b,roughness:.55,metalness:.3});
  const funnel=add(new THREE.CylinderGeometry(3.2,3.8,9,24),funnelMat,-58,28,0);funnel.scale.z=1.5;facilityMeshes.push(funnel);
@@ -123,7 +131,7 @@ export function addShipDetails({ship,box,facilityMeshes,cargo}){
  for(const x of [-30,-4,22])for(const s of [-1,1])light(0xffe2a8,x,13,s*14.5,5);
  const radars=[];ship.traverse(o=>{if(o.userData.spin)radars.push(o);});
  return {
-  setNight(on){facade.side.emissiveIntensity=on?1.4:0;bridgeFacade.side.emissiveIntensity=on?1.4:0;lights.forEach(l=>l.visible=on);},
+  setNight(on){facade.side.emissiveIntensity=on?1.4:0;casingFacade.side.emissiveIntensity=on?1.4:0;bridgeFacade.side.emissiveIntensity=on?1.4:0;lights.forEach(l=>l.visible=on);},
   animate(t){radars.forEach(r=>r.rotation.y=t*r.userData.spin);}
  };
 }
