@@ -67,7 +67,7 @@ function open(){
   setTimeout(()=>{el.remove();view.classList.remove('onboard-stage');document.body.classList.remove('onboarding-open');
    twin?.setCamera?.(.72,.3,175);window.dispatchEvent(new Event('resize'));after?.();},reduced?0:650);
  };
- el.querySelector('.ob-start').onclick=()=>close(()=>{view.scrollIntoView({block:'center',behavior:reduced?'auto':'smooth'});const play=$('#play');if(play&&!play.disabled&&!twin?.snapshot?.().running)play.click();});
+ el.querySelector('.ob-start').onclick=()=>close(()=>window.scrollTo({top:0,behavior:'auto'}));
  el.querySelector('.ob-guide').onclick=()=>close(()=>$('.tutorial-launch')?.click());
  el.querySelector('.ob-ai').onclick=()=>close(()=>$('.tutorial-ai-launch')?.click());
  el.querySelector('.ob-skip').onclick=()=>close();

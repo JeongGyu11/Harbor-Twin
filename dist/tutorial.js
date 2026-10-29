@@ -201,10 +201,6 @@ export function initTutorial({ pause, captureView, restoreView, showView }) {
   let welcomed=false;try{welcomed=localStorage.getItem(WELCOME_KEY)==='done';}catch{}
   if(!seen&&!welcomed){
     launch.classList.add('is-new');
-    welcome=document.createElement('section');welcome.className='welcome-banner';welcome.setAttribute('role','region');welcome.setAttribute('aria-label','처음 방문 안내');
-    welcome.innerHTML=`<div class="welcome-text"><strong>처음이신가요?</strong><span>아래 <b>▶ 시뮬레이션 시작</b>을 눌러 바로 하역을 보거나, <b>시작 가이드</b>로 5단계 사용법을, <b>AI 기능 가이드</b>로 AI 활용법을 확인하세요.</span></div><div class="welcome-actions"><button type="button" class="welcome-guide">◈ 시작 가이드 보기</button><button type="button" class="welcome-ai">✦ AI 기능 가이드</button><button type="button" class="welcome-skip">바로 둘러보기</button><button type="button" class="welcome-close" aria-label="안내 닫기">×</button></div>`;
-    document.querySelector('.page-title').after(welcome);
-    welcome.querySelector('.welcome-guide').onclick=()=>open('core');welcome.querySelector('.welcome-ai').onclick=()=>open('ai');
-    welcome.querySelector('.welcome-skip').onclick=dismissWelcome;welcome.querySelector('.welcome-close').onclick=dismissWelcome;
+    // The onboarding screen already introduces both guides, so no separate welcome banner.
   }
 }
