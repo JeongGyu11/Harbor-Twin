@@ -27,6 +27,8 @@ class AI(unittest.TestCase):
   body={'context':{'heelDeg':-.07,'gmM':2.4,'tanks':[{'tonnes':600}]*4,'unloading':{'containersTotal':72,'elapsed':'02:30'}}}
   answer='지금은 좌현으로 0.07도 기울었어요. 추정 GM은 2.4m이고 탱크는 4개이며 각 600톤이에요. 전체 화물은 72개이고 150초가 지났어요.'
   self.assertEqual(a.guard_prose('chat',answer,body),(answer,False))
+  wrong,changed=a.guard_prose('chat','추정 GM은 2.4km예요. 평형수는 균형을 맞추는 물이에요.',body)
+  self.assertTrue(changed);self.assertNotIn('2.4km',wrong);self.assertIn('균형을 맞추는 물',wrong)
  def test_chat_removes_only_bad_sentences(self):
   body={'context':{'gmM':2.4}}
   text='평형수는 무게 분포를 조절하는 물이에요. 위험이 없어요. 추정 GM은 2.4m예요. 화물은 999톤이에요.'
