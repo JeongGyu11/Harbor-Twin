@@ -394,7 +394,8 @@ OUTPUT_POLICY = """
 - simulate_what_if 도구의 인자에는 사용자 질문의 수치를 정확히 전달하세요. 아래 문장 제한은 도구 인자에는 적용하지 않습니다.
 - 설명에는 숫자, 숫자로 된 번호 목록, 시간, 수치 단위, 탱크 영문 ID를 쓰지 마세요. 수치는 화면의 원본 표가 담당합니다.
 - 숫자가 필요한 부분은 '기록 표의 값', '현재 시연 한도', '추천 탱크'로 표현하세요. 목록은 • 기호를 사용하세요.
-- '안전합니다', '괜찮아요', '계속 진행해도 됩니다', '안전 기준 만족' 같은 보증·운전 허가 표현을 쓰지 마세요.
+- '위험이 없어요', '안전합니다', '문제없습니다', '괜찮아요', '계속 진행해도 됩니다', '안전 기준 만족' 같은 보증·운전 허가 표현을 쓰지 마세요. 시연 기준 내여도 실제 위험 부재를 단정하지 마세요.
+- 판정이 시연 기준 내이면 '현재 가정 모델의 표시 기준 이내입니다. 실제 선박의 안전을 보장하는 판정은 아닙니다.'라고 한계를 명시하세요.
 - operationAssessment의 판정 등급을 바꾸지 마세요. 자료 부족이면 보류와 확인을 안내하세요.
 - 가상 도구에서 evaluatedTransferAssessment가 있으면 사용자가 요청한 이송안의 판정을 우선 설명하세요.
 - 보고서에서도 수치·단위를 반복하지 말고 기록의 의미와 검토할 항목만 서술하세요.
@@ -447,7 +448,15 @@ def _assessment(body):
     return assessment if isinstance(assessment, dict) else {}
 
 def guard_prose(role, content):
-    forbidden = r'안전(?:합니다|해요|하다|한\s*(?:상태|작업|하역)|\s*기준)|괜찮(?:아요|습니다)|계속\s*(?:하역|진행).*?(?:돼|됩|가능)|시속|초속|[0-9０-９]|(?:m/s|km/h|mps|톤/초)'
+    forbidden = (r'안전(?:합니다|해요|하다|한\s*(?:상태|작업|하역)|\s*기준)|괜찮(?:아요|습니다)|'
+                 r'(?:위험|리스크|문제)(?:성|요소)?(?:이|가|은|는|도)?\s*(?:전혀\s*|아무(?:런)?\s*)?없|'
+                 r'(?:위험|리스크)(?:이|가|은|는)?\s*(?:제로|영)|'
+                 r'위험하지\s*않|위험성(?:이|은)?\s*전무|'
+                 r'걱정(?:할\s*필요|하지\s*않아도)|'
+                 r'(?:계속\s*)?(?:하역|작업|진행)(?:을|를)?\s*(?:계속\s*)?(?:해도|하여도)\s*(?:돼|되|됩|괜찮)|'
+                 r'계속\s*(?:하역|진행).*?(?:돼|됩|가능)|'
+                 r'(?:no\s+(?:risk|danger)|risk[- ]free|completely\s+safe)|'
+                 r'시속|초속|[0-9０-９]|(?:m/s|km/h|mps|톤/초)')
     if not re.search(forbidden, content, re.I):
         return content, False
     if role == 'report':
@@ -484,6 +493,9 @@ def complete(body):
                 assessment = _assessment(body)
                 if assessment.get('level', 0) > 0 and re.search(r'문제(?:가)?\s*없|하역\s*정상|계속\s*(?:해도|진행|하역)|시연\s*기준\s*내', content):
                     content, guarded = guard_prose(role, '안전합니다')
+                if guarded and role != 'report' and assessment.get('label') == '시연 기준 내' and not assessment.get('missing'):
+                    content = ('현재 가정 모델의 표시 기준 이내입니다. 실제 선박의 안전을 보장하는 판정은 아닙니다. '
+                               + content)
                 result['content'], result['guarded'] = content, guarded
             a = _assessment(body)
             result.update(generatedAt=datetime.datetime.now(datetime.timezone.utc).isoformat(),

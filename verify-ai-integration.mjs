@@ -17,6 +17,11 @@ assert.equal(t.run('aiWhatIf({wind_speed:20}).operationAssessment.label'),'중�
 assert.equal(t.run('aiWhatIf({wind_speed:5}).conditions.windMps'),5);assert.equal(t.run('config.environment.wind'),20);
 assert.ok(t.run('aiWhatIf({wind_speed:120}).error'));assert.equal(t.run('config.environment.wind'),20);
 assert.ok(t.run('aiWhatIf({transfer_from:"P-A"}).error'));
+t.run('config.environment.weatherData={raw:{VS:"4616"}}');
+near(t.run('aiContext().operationAssessment.items.find(i=>i.name==="시정").value'),46.16);
+near(t.run('aiWhatIf({wind_speed:5}).operationAssessment.items.find(i=>i.name==="시정").value'),46.16);
+t.run('config.environment.weatherData.raw.VS="90"');
+assert.equal(t.run('aiWhatIf({wind_speed:5}).operationAssessment.items.find(i=>i.name==="시정").level'),2);
 t.run('config.environment=null');
 const x=t.run('aiWhatIf({transfer_from:"P-A",transfer_to:"S-A",transfer_amount:200})');
 assert.equal(x.evaluatedTransferAssessment.label,'중지 검토');assert.match(x.modelVerdict,/중지 검토/);

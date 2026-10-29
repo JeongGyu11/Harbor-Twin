@@ -14,6 +14,31 @@ class AI(unittest.TestCase):
    with self.subTest(text=text):
     out,changed=a.guard_prose('report',text);self.assertTrue(changed);self.assertNotIn('시속',out);self.assertNotIn('30',out)
  def test_good_prose_preserved(self):self.assertEqual(a.guard_prose('chat','추천 탱크의 방향과 수량을 확인하세요.'),('추천 탱크의 방향과 수량을 확인하세요.',False))
+ def test_no_absolute_safety_claim_in_any_prose_role(self):
+  claims=['현재 기울기가 아주 작은 수준이라 위험이 없어요.', '위험은 전혀 없습니다.', '리스크가 없습니다.',
+          '문제없이 하역할 수 있습니다.', '위험하지 않습니다.', '위험성이 전무합니다.',
+          '작업을 계속해도 됩니다.', '하역해도 돼요.', 'There is no risk.', 'This is completely safe.']
+  for role in ['chat','weather','briefing','risk','report']:
+   for text in claims:
+    with self.subTest(role=role,text=text):
+     out,changed=a.guard_prose(role,text);self.assertTrue(changed);self.assertNotEqual(out,text)
+ def test_model_scope_explanation_is_preserved(self):
+  text='현재 가정 모델의 표시 기준 이내입니다. 실제 선박의 안전을 보장하는 판정은 아닙니다.'
+  self.assertEqual(a.guard_prose('weather',text),(text,False))
+ def test_safety_claim_guard_is_independent_of_assessment_level(self):
+  for assessment in [{'level':0,'label':'시연 기준 내','missing':[]},
+                     {'level':0,'label':'자료 부족 · 판정 보류','missing':['시정']},
+                     {'level':1,'label':'주의'},{'level':2,'label':'중지 검토'}]:
+   with self.subTest(assessment=assessment),patch.object(a,'_complete_provider',return_value=(200,{'content':'위험이 없어요.'})):
+    code,r=a.complete({'role':'weather','context':{'operationAssessment':assessment}})
+    self.assertEqual(code,200);self.assertTrue(r['guarded']);self.assertEqual(r['assessmentLabel'],assessment['label'])
+    self.assertNotIn('위험이 없',r['content'])
+    self.assertEqual('현재 가정 모델의 표시 기준 이내입니다.' in r['content'],assessment['label']=='시연 기준 내')
+ def test_guarded_content_is_the_only_cached_content(self):
+  with patch.object(a,'_complete_provider',return_value=(200,{'content':'위험이 없어요.'})) as provider:
+   body={'role':'weather','context':{'operationAssessment':{'level':0,'label':'시연 기준 내','missing':[]}}}
+   a.complete(body);_,cached=a.complete(body)
+   self.assertTrue(cached['cached']);self.assertTrue(cached['guarded']);self.assertNotIn('위험이 없',cached['content']);self.assertEqual(provider.call_count,1)
  def test_verdict_and_guard(self):
   with patch.object(a,'_complete_provider',return_value=(200,{'content':'기준 내이므로 계속 진행해도 됩니다.'})):
    code,r=a.complete({'role':'chat','context':{'operationAssessment':{'level':2,'label':'중지 검토'}},'messages':[{'role':'user','content':'계속해도 돼?'}]})
@@ -75,5 +100,11 @@ class AI(unittest.TestCase):
     self.assertEqual(error.exception.code,400);self.assertIn('error',json.loads(error.exception.read()))
     req=urllib.request.Request(base+'/api/ai/complete',method='OPTIONS',headers={'Origin':'http://localhost:4174'})
     with urllib.request.urlopen(req,timeout=3) as r:self.assertEqual(r.status,204);self.assertIn('POST',r.headers['Access-Control-Allow-Methods'])
+    body={'role':'weather','context':{'operationAssessment':{'level':0,'label':'시연 기준 내','missing':[]}}}
+    req=urllib.request.Request(base+'/api/ai/complete',data=json.dumps(body).encode(),headers={'Content-Type':'application/json'},method='POST')
+    with patch.object(a,'_complete_provider',return_value=(200,{'content':'현재 기울기가 아주 작은 수준이라 위험이 없어요.'})):
+     with urllib.request.urlopen(req,timeout=3) as response:out=json.load(response)
+    self.assertTrue(out['guarded']);self.assertTrue(out['qualityChecked']);self.assertNotIn('위험이 없',out['content'])
+    self.assertIn('실제 선박의 안전을 보장하는 판정은 아닙니다.',out['content'])
    finally:server.shutdown();server.server_close();worker.join()
 if __name__=='__main__':unittest.main()

@@ -5,7 +5,7 @@ import {windResponse} from './wind-model.mjs?v=windbands1';
 import {initWorkspaceUI} from './workspace-ui.js?v=placement2';
 import {createWeatherEffects} from './weather-effects.js?v=real1';
 import * as THREE from './vendor/three.module.js';
-import * as Decision from './decision.mjs?v=fix1028';
+import * as Decision from './decision.mjs?v=vis1029';
 import { createOcean } from './ocean.js?v=real1';
 import { hullPose } from './ocean-motion.mjs?v=windbands1';
 import { initEnvironment } from './environment-ui.js?v=fix1028';

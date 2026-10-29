@@ -5,7 +5,9 @@ export const OPERATION_LABELS=Object.freeze(['시연 기준 내','주의','중�
 const finite=v=>v!==null&&v!==undefined&&String(v).trim()!==''&&Number.isFinite(Number(v))?Number(v):null;
 export function assessOperation({environment=null,risk=null,peak=null,threshold=1.5}={}){
  const e=environment,w=e?.weatherData,raw=w?.raw??w?.data?.raw??{},wind=finite(e?.wind),height=finite(e?.height),visibility=finite(raw.VS),rain=finite(raw.RN);
- const weather=e?.weather??null,visKm=visibility!==null&&visibility>0?visibility/10:null;
+ // KMA ASOS VS is reported in 10 m units: VS * 10 / 1000 = VS / 100 km.
+ // Zero is a valid visibility observation; negative values are missing sentinels.
+ const weather=e?.weather??null,visKm=visibility!==null&&visibility>=0?visibility/100:null;
  const items=[];
  const add=(name,value,unit,level,rule)=>items.push({name,value,unit,level,rule});
  add('바람',wind,'m/s',wind===null?null:wind>=15?2:wind>=10?1:0,'10 m/s 이상 주의 · 15 m/s 이상 중지 검토 (시연용)');
